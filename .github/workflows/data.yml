@@ -1,0 +1,26 @@
+name: real-data-backtest
+on:
+  workflow_dispatch:
+    inputs:
+      start: { description: "Start date YYYY-MM-DD", default: "2019-01-01" }
+      end: { description: "End date YYYY-MM-DD (blank = today)", default: "" }
+jobs:
+  fetch-and-backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch NSE daily files
+        run: |
+          END="${{ inputs.end }}"; [ -n "$END" ] || END="$(date -u +%F)"
+          python3 tools/fetch_nse.py --start "${{ inputs.start }}" --end "$END" --out data/nse
+      - name: Build, test, backtest on NSE data
+        run: MC_DATA_DIR=data/nse bash scripts/build_and_report.sh
+      - name: Upload SIMULATION report (derived results only, no raw exchange data)
+        uses: actions/upload-artifact@v4
+        with:
+          name: nse-simulation-report
+          path: |
+            web/reports/report.json
+            web/reports/latency.json
+            data/nse/_adjustments.csv
