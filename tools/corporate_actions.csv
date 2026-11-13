@@ -1,0 +1,9 @@
+# Splits and bonuses applied by tools/fetch_nse.py. factor = new shares per old share.
+# NSE bhavcopy files are NOT adjusted for these, so every one must be listed here.
+# status: verified = checked against a cited source; verify = inferred from an exact price jump in the exchange file, source still to be checked.
+symbol,ex_date,factor,status,source
+GOLDBEES,2019-12-19,100,verified,NSE circular NSE/CML/42888 (12 Dec 2019): face value Rs 100 to Re 1
+NIFTYBEES,2019-12-19,10,verified,NSE circular NSE/CML/42888 (12 Dec 2019): face value Rs 10 to Re 1
+HDFCBANK,2025-08-26,2,verified,1:1 bonus; ex-date 26 Aug 2025 (Business Standard 26 Aug 2025; prior close 1964.10)
+HDFCBANK,2019-09-19,2,verify,price halved in exchange file (2187.75 to 1099.90 open); expected face-value split Rs 2 to Re 1
+RELIANCE,2024-10-28,2,verify,price halved in exchange file (2655.70 to 1337.00 open); expected 1:1 bonus

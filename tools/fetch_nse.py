@@ -4,7 +4,8 @@
 Usage: fetch_nse.py --start YYYY-MM-DD --end YYYY-MM-DD --out data/nse [--symbols A,B,C]
 
 Source: nsearchives.nseindia.com (official exchange archive). Only the EQ series is used.
-Prices are back-adjusted for splits and bonuses using the exchange's own adjusted previous close.
+Prices are back-adjusted for the splits and bonuses listed in tools/corporate_actions.csv
+(the exchange files are not adjusted). Unexplained large jumps are reported in _gaps.csv.
 Dividends are NOT adjusted. Adjustments are logged to _adjustments.csv for checking.
 Exit codes: 0 ok, 3 archive unreachable or blocked, 4 file format not as expected.
 """
@@ -96,36 +97,41 @@ def main():
 
     adj_log = []
     gap_log = []
+    actions = []
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, "corporate_actions.csv")) as f:
+        for row in csv.DictReader(l for l in f if not l.startswith("#")):
+            actions.append((row["symbol"].strip(), dt.date.fromisoformat(row["ex_date"].strip()), float(row["factor"])))
     for s, rs in sorted(rows.items()):
         if not rs:
             print(f"{s}: no rows (symbol not found in EQ series)"); continue
         rs.sort(key=lambda r: r[0])
+        acts = sorted((d0, f0) for (sy, d0, f0) in actions if sy == s)
+        for k, r in enumerate(rs):   # divide prices before each ex-date by the factor; multiply volume
+            f = 1.0
+            for d0, f0 in acts:
+                if r[0] < d0: f *= f0
+            if f != 1.0:
+                rs[k] = [r[0], r[1] / f, r[2] / f, r[3] / f, r[4] / f, r[5] / f, int(r[6] * f)]
+        for d0, f0 in acts:
+            if rs[0][0] < d0 <= rs[-1][0]: adj_log.append([s, d0.isoformat(), f"{f0:g}"])
         for i in range(1, len(rs)):
             prev_c = rs[i - 1][4]
             if prev_c > 0 and abs(rs[i][1] / prev_c - 1.0) > a.gap:
                 gap_log.append([s, rs[i][0].isoformat(), f"{prev_c:.2f}", f"{rs[i][5]:.2f}", f"{rs[i][1]:.2f}", f"{rs[i][4]:.2f}"])
-        factor = 1.0
-        for i in range(len(rs) - 1, -1, -1):          # walk backwards, scaling everything before each corporate action
-            d_, o, h, l, c, pc, v = rs[i]
-            rs[i] = [d_, o * factor, h * factor, l * factor, c * factor, pc, int(v / factor) if factor else v]
-            if i > 0 and rs[i - 1][4] > 0:
-                ratio = pc / rs[i - 1][4]
-                if abs(ratio - 1.0) > 0.02:
-                    adj_log.append([s, d_.isoformat(), f"{ratio:.6f}"])
-                    factor *= ratio
         with open(os.path.join(a.out, s + ".csv"), "w") as f:
-            f.write("# NSE daily bhavcopy, EQ series, source nsearchives.nseindia.com. Back-adjusted for splits and bonuses; dividends not adjusted.\n")
+            f.write("# NSE daily bhavcopy, EQ series, source nsearchives.nseindia.com. Back-adjusted for splits and bonuses in tools/corporate_actions.csv; dividends not adjusted.\n")
             f.write("date,open,high,low,close,volume\n")
             for d_, o, h, l, c, pc, v in rs:
                 f.write(f"{d_.strftime('%Y%m%d')},{o:.2f},{max(h, o, c):.2f},{min(l, o, c):.2f},{c:.2f},{v}\n")
         print(f"{s}: {len(rs)} bars {rs[0][0]}..{rs[-1][0]}")
     with open(os.path.join(a.out, "_adjustments.csv"), "w") as f:
-        f.write("symbol,ex_date,price_ratio\n")
+        f.write("symbol,ex_date,factor\n")
         for r in adj_log: f.write(",".join(r) + "\n")
     with open(os.path.join(a.out, "_gaps.csv"), "w") as f:
-        f.write("symbol,date,prev_close_in_data,prev_close_in_file,open,close\n")
+        f.write("symbol,date,prev_close_adjusted,prev_close_in_file,open,close\n")
         for r in gap_log: f.write(",".join(r) + "\n")
-    print(f"large opening jumps (> {a.gap:.0%}) before adjustment: {len(gap_log)}")
+    print(f"UNEXPLAINED opening jumps (> {a.gap:.0%}) after adjustment: {len(gap_log)}  (each needs a corporate_actions.csv entry or a check)")
     for r in gap_log: print("  GAP", *r)
     print(f"corporate-action adjustments applied: {len(adj_log)}")
     for r in adj_log: print("  ", *r)
