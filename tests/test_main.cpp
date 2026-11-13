@@ -115,7 +115,7 @@ static void test_book_property() {
 }
 
 static void test_osm() {
-  State s = State::New, n;
+  State s = State::New, n = State::New;
   for (Ev e : {Ev::Submit, Ev::RiskPass, Ev::VenueAck, Ev::PartialFill, Ev::FullFill}) { CHECK(next_state(s, e, n)); s = n; }
   CHECK(s == State::Filled && is_terminal(s));
   for (int e = 0; e <= static_cast<int>(Ev::Expire); ++e)   // terminal states accept nothing
