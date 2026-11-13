@@ -9,7 +9,7 @@ bhavcopy), matched by ISIN. Links (ownership only; no supplier or customer data)
 A link shown on one company is also shown in reverse on the other company.
 Usage: build_connector.py [--out web/data/connector.json] [--date YYYY-MM-DD]
 """
-import argparse, csv, datetime as dt, io, json, os, sys, time, urllib.parse, urllib.request
+import argparse, csv, datetime as dt, io, json, os, sys, time, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fetch_nse import HEADERS   # noqa: E402
 
@@ -31,6 +31,9 @@ def get(url, headers=None, data=None, tries=3):
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=h, data=data), timeout=90) as r:
                 return r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code == 404: return None   # e.g. GLEIF: no parent reported
+            print(f"  attempt {k + 1} failed for {url[:90]}: {e}")
         except Exception as e:
             print(f"  attempt {k + 1} failed for {url[:90]}: {e}")
             time.sleep(3 * (k + 1))
@@ -72,40 +75,53 @@ def main():
             break
     print(f"listings: {n_nse} NSE, {sum(1 for c in comp.values() if c['bse'])} with BSE code (BSE file {bse_day}), {len(comp)} total")
 
+    by_nse = {c["nse"]: i for i, c in comp.items() if c["nse"]}
+    by_bse = {c["bse"]: i for i, c in comp.items() if c["bse"]}
+    def by_ticker(tk, exchange):
+        tk = tk.strip().upper().replace("NSE:", "").replace("BSE:", "")
+        if "National Stock Exchange of India" in exchange: return by_nse.get(tk, "")
+        if "Bombay" in exchange or "BSE" in exchange: return by_bse.get(tk, "")
+        return ""
     links = {}   # isin -> list of [name, isin_or_empty, relation, source]
     def add(isin, name, other_isin, rel, src):
+        if other_isin == isin: return
         lst = links.setdefault(isin, [])
-        row = [name, other_isin or "", rel, src]
-        if row not in lst: lst.append(row)
+        key = (other_isin or " ".join(name.casefold().replace(".", " ").split()), rel)
+        for row in lst:
+            if (row[1] or " ".join(row[0].casefold().replace(".", " ").split()), row[2]) == key:
+                if src not in row[3].split(" + "): row[3] += " + " + src
+                return
+        lst.append([name, other_isin or "", rel, src])
     def add_both(a_isin, a_name, b_isin, b_name, rel, src):
         if a_isin in comp: add(a_isin, b_name, b_isin if b_isin in comp else "", rel, src)
         if b_isin and b_isin in comp: add(b_isin, a_name, a_isin if a_isin in comp else "", REVERSE.get(rel, "related"), src)
 
     # ---- Wikidata ----
-    q = """SELECT ?c ?isin ?lei ?p ?t ?tLabel ?tIsin WHERE {
+    q = """SELECT ?c ?isin ?lei ?p ?t ?tLabel ?tIsin ?tTicker ?tExName WHERE {
       ?c wdt:P946 ?isin . FILTER(STRSTARTS(?isin, "INE"))
       OPTIONAL { ?c wdt:P1278 ?lei }
       OPTIONAL { VALUES ?p { wdt:P355 wdt:P749 wdt:P127 wdt:P1830 } ?c ?p ?t .
-                 OPTIONAL { ?t wdt:P946 ?tIsin . FILTER(STRSTARTS(?tIsin, "INE")) } }
+                 OPTIONAL { ?t wdt:P946 ?tIsin . FILTER(STRSTARTS(?tIsin, "INE")) }
+                 OPTIONAL { ?t p:P414 ?tst . ?tst pq:P249 ?tTicker ; ps:P414 ?tex .
+                            ?tex rdfs:label ?tExName . FILTER(LANG(?tExName) = "en") } }
       SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } }"""
     rows = sparql(q)
     # Companies without an ISIN in Wikidata but with an NSE or BSE listing and ticker
-    q2 = """SELECT ?c ?ticker ?exLabel ?lei ?p ?t ?tLabel ?tIsin WHERE {
+    q2 = """SELECT ?c ?ticker ?exLabel ?lei ?p ?t ?tLabel ?tIsin ?tTicker ?tExName WHERE {
       VALUES ?exLabelEn { "National Stock Exchange of India"@en "Bombay Stock Exchange"@en "BSE Limited"@en }
       ?ex rdfs:label ?exLabelEn . ?c p:P414 ?st . ?st ps:P414 ?ex ; pq:P249 ?ticker .
       FILTER NOT EXISTS { ?c wdt:P946 ?anyIsin . FILTER(STRSTARTS(?anyIsin, "INE")) }
       OPTIONAL { ?c wdt:P1278 ?lei }
       OPTIONAL { VALUES ?p { wdt:P355 wdt:P749 wdt:P127 wdt:P1830 } ?c ?p ?t .
-                 OPTIONAL { ?t wdt:P946 ?tIsin . FILTER(STRSTARTS(?tIsin, "INE")) } }
+                 OPTIONAL { ?t wdt:P946 ?tIsin . FILTER(STRSTARTS(?tIsin, "INE")) }
+                 OPTIONAL { ?t p:P414 ?tst . ?tst pq:P249 ?tTicker ; ps:P414 ?tex .
+                            ?tex rdfs:label ?tExName . FILTER(LANG(?tExName) = "en") } }
       SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } }"""
     rows2 = sparql(q2)
-    by_nse = {c["nse"]: i for i, c in comp.items() if c["nse"]}
-    by_bse = {c["bse"]: i for i, c in comp.items() if c["bse"]}
     if rows2:
         matched = 0
         for b in rows2:
-            tk = b["ticker"]["value"].strip().upper().replace("NSE:", "").replace("BSE:", "")
-            isin = by_nse.get(tk) if "National" in b["exLabel"]["value"] else by_bse.get(tk)
+            isin = by_ticker(b["ticker"]["value"], b["exLabel"]["value"])
             if not isin: continue
             b["isin"] = {"value": isin}
             rows = (rows or []) + [b]
@@ -122,7 +138,10 @@ def main():
             rel = REL[b["p"]["value"].rsplit("/", 1)[1]]
             name = b["tLabel"]["value"]
             if name.startswith("Q") and name[1:].isdigit(): continue   # no English label
-            add_both(isin, comp[isin]["n"], b.get("tIsin", {}).get("value", ""), name, rel, "Wikidata")
+            t_isin = b.get("tIsin", {}).get("value", "")
+            if not t_isin and "tTicker" in b:
+                t_isin = by_ticker(b["tTicker"]["value"], b.get("tExName", {}).get("value", ""))
+            add_both(isin, comp[isin]["n"], t_isin, name, rel, "Wikidata")
             wd_links += 1
         print(f"Wikidata: {len(rows)} rows, {wd_links} links, {len(leis)} companies with an LEI")
 
@@ -137,7 +156,12 @@ def main():
             if not t: continue
             data = json.loads(t).get("data") or []
             for x in (data if isinstance(data, list) else [data]):
-                name = x["attributes"]["entity"]["legalName"]["name"]
+                ent = x["attributes"]["entity"]
+                name = ent["legalName"]["name"]
+                if not name.isascii():
+                    alts = [o["name"] for o in (ent.get("transliteratedOtherNames") or []) + (ent.get("otherNames") or []) if o.get("name", "").isascii()]
+                    if alts: name = alts[0]
+                    else: name = name + " (" + (ent.get("legalAddress", {}).get("country") or "?") + ")"
                 add_both(isin, comp[isin]["n"], lei_to_isin.get(x["id"], ""), name, rel, "GLEIF")
                 g_links += 1
     print(f"GLEIF: {g_links} links")
