@@ -45,6 +45,7 @@ def main():
     ap.add_argument("--start", required=True); ap.add_argument("--end", required=True)
     ap.add_argument("--out", default="data/nse"); ap.add_argument("--symbols", default=DEFAULT_SYMBOLS)
     ap.add_argument("--cache", default=".cache/nse"); ap.add_argument("--delay", type=float, default=0.35)
+    ap.add_argument("--gap", type=float, default=0.20, help="report open-vs-previous-close moves larger than this")
     a = ap.parse_args()
     start, end = dt.date.fromisoformat(a.start), dt.date.fromisoformat(a.end)
     want = set(s.strip().upper() for s in a.symbols.split(",") if s.strip())
@@ -53,7 +54,7 @@ def main():
     ok = missing = failed = 0
     d = start
     while d <= end:
-        if d.weekday() < 5:
+        if True:   # weekends included: special sessions exist; non-trading days return 404
             url, col = url_for(d)
             cache = os.path.join(a.cache, d.strftime("%Y%m%d") + ".zip")
             blob, status = (open(cache, "rb").read(), 200) if os.path.exists(cache) else fetch(url)
@@ -94,10 +95,15 @@ def main():
         print("No trading days loaded."); sys.exit(3)
 
     adj_log = []
+    gap_log = []
     for s, rs in sorted(rows.items()):
         if not rs:
             print(f"{s}: no rows (symbol not found in EQ series)"); continue
         rs.sort(key=lambda r: r[0])
+        for i in range(1, len(rs)):
+            prev_c = rs[i - 1][4]
+            if prev_c > 0 and abs(rs[i][1] / prev_c - 1.0) > a.gap:
+                gap_log.append([s, rs[i][0].isoformat(), f"{prev_c:.2f}", f"{rs[i][5]:.2f}", f"{rs[i][1]:.2f}", f"{rs[i][4]:.2f}"])
         factor = 1.0
         for i in range(len(rs) - 1, -1, -1):          # walk backwards, scaling everything before each corporate action
             d_, o, h, l, c, pc, v = rs[i]
@@ -116,6 +122,11 @@ def main():
     with open(os.path.join(a.out, "_adjustments.csv"), "w") as f:
         f.write("symbol,ex_date,price_ratio\n")
         for r in adj_log: f.write(",".join(r) + "\n")
+    with open(os.path.join(a.out, "_gaps.csv"), "w") as f:
+        f.write("symbol,date,prev_close_in_data,prev_close_in_file,open,close\n")
+        for r in gap_log: f.write(",".join(r) + "\n")
+    print(f"large opening jumps (> {a.gap:.0%}) before adjustment: {len(gap_log)}")
+    for r in gap_log: print("  GAP", *r)
     print(f"corporate-action adjustments applied: {len(adj_log)}")
     for r in adj_log: print("  ", *r)
 
