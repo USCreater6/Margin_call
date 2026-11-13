@@ -47,7 +47,7 @@ main{flex:1;min-height:0;padding:6px 16px}
 .side{grid-column:16 / span 9;grid-row:1 / span 2;display:flex;min-width:0;min-height:0}
 .side>.panel{flex:1}
 .fix{overflow:hidden}
-#web{display:flex;flex:1;min-height:0;overflow:hidden}
+#web{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
 .g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:8px}
 .stack{display:flex;flex-direction:column;gap:6px}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:3px;min-width:0;min-height:0;display:flex;flex-direction:column}
@@ -105,6 +105,12 @@ footer span{margin-right:36px}
 .hub::before,.hub::after{content:"";position:absolute;top:50%;width:22px;border-top:1px solid var(--mute)}
 .hub::before{left:-24px}.hub::after{right:-24px}
 .hub b{display:block;font-size:19px;color:var(--accent)}
+.grp{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:6px 0 2px}
+.chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:3px}
+.chip{text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 6px;cursor:pointer;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip:hover,.chip.on{border-color:var(--accent)}
+.chip small{color:var(--mute);font-family:var(--mono);font-size:10px}
+.side2{overflow:auto;min-height:0;padding:0 8px 6px}
 .colh{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);padding:0 8px}
 .tabs{display:flex;gap:3px;flex-wrap:wrap;padding:4px 8px;border-bottom:1px solid var(--line);flex:none}
 svg text{fill:var(--mute);font-family:var(--mono);font-size:9px}
@@ -160,7 +166,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
     <p class="note">Stub signals are random, not GRIT.</p>
   </div></div></div>
   <div class="side">
-    <div class="panel"><h2>Adverse media <span class="pill sim">SAMPLE</span></h2>
+    <div class="panel"><h2>Adverse media <span class="pill sim" id="newsSrc">SAMPLE</span></h2>
       <div class="video"><div class="play"></div><select id="chan" aria-label="Channel" style="width:auto"><option>Business news live stream 1</option><option>Business news live stream 2</option><option>Global markets live stream</option></select><div>Video cannot play inside this preview. The built terminal plays the channel's official live stream here.</div></div>
       <div class="fix"><table id="news"></table></div>
     </div>
@@ -172,7 +178,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 
 <section class="view" id="v-connector">
   <div class="panel" id="cL"><h2>Company connector <span class="row" style="gap:6px;align-items:center"><input id="cQ" list="cList" placeholder="Search NSE symbol, BSE code or name" autocomplete="off" style="width:260px" aria-label="Search company"><datalist id="cList"></datalist><span class="pill sim" id="cSrc" title="">OWNERSHIP LINKS ONLY</span></span></h2>
-    <div class="row" style="padding:4px 10px 0;flex:none"><div class="colh" style="flex:1">Not listed</div><div class="colh" style="flex:1;text-align:right">Listed · NSE / BSE</div></div>
+    <div class="row" id="cFilt" style="padding:4px 10px 2px;flex:none;gap:4px"></div>
     <div id="web"></div>
   </div>
   <div class="split" id="split" role="separator" aria-orientation="vertical" aria-label="Resize connector and history" tabindex="0" title="Drag to resize"></div>
@@ -323,7 +329,23 @@ function submit(s,side,type,q,px,src){
 }
 function cancelAll(){openOrd().forEach(o=>{o.st='CANCELLED'});log('CANCEL ALL','All open simulated orders cancelled')}
 function flatten(){cancelAll();Object.entries(S.pos).forEach(([s,p])=>submit(s,p.q>0?'SELL':'BUY','MARKET',Math.abs(p.q),0,'RISK'));log('FLATTEN','All simulated positions closed')}
-function pushNews(){const h=HEAD[hi++%HEAD.length];news.unshift({t:now(),k:h[0],g:h[1],m:h[2]});if(news.length>30)news.pop()}
+let NEWS=null;
+const ago=t=>{if(!t)return'';const m=Math.round((Date.now()-new Date(t))/60000);return m<60?m+'m':m<1440?Math.round(m/60)+'h':Math.round(m/1440)+'d'};
+function renderNews(){
+  if(!NEWS)return;
+  const adv=NEWS.items.filter(x=>x.tag==='ADVERSE'),rest=NEWS.items.filter(x=>x.tag!=='ADVERSE');
+  const top=adv.slice(0,3).concat(rest).slice(0,3);
+  const link=(x,txt)=>x.url?'<a href="'+H(x.url)+'" target="_blank" rel="noopener noreferrer" style="color:inherit">'+txt+'</a>':txt;
+  $('#news').innerHTML='<tr><th>Age</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline · source</th></tr>'+(top.map(x=>'<tr title="'+H((x.why?x.why+' · ':'')+x.src+' · '+x.t)+'"><td>'+ago(x.t)+'</td><td><span class="pill '+(x.tag==='ADVERSE'?'bad':'lock')+'">'+H(x.tag)+'</span></td><td>'+H(x.topic||'-')+'</td><td class="w">'+link(x,H(x.title.slice(0,160)))+' <span class="mute">· '+H(x.src)+'</span></td></tr>').join('')||'<tr><td colspan="4" class="mute w">No items yet.</td></tr>');
+  $('#tape').innerHTML=NEWS.items.slice(0,25).map(x=>'<span><b class="'+(x.tag==='ADVERSE'?'dn':'mute')+'">'+H(x.tag)+'</b> · '+H((x.topic?x.topic+' · ':'')+x.title.slice(0,140))+'</span>').join('');
+  const sb=document.querySelector('.simband');sb.textContent=sb.textContent.replace('SAMPLE NEWS','LIVE NEWS (NSE FILINGS)');
+  const st=NEWS.status||{};$('#newsSrc').textContent='LIVE · '+adv.length+' ADVERSE';$('#newsSrc').className='pill bad';
+  $('#newsSrc').title='Updated '+NEWS.updated+'. NSE filings: '+(st.nse||'?')+'. GDELT: '+(st.gdelt||'?')+'. NSE items are tagged ADVERSE by a keyword rule; GDELT items by tone below -3.';
+}
+async function loadNews(){
+  try{const r=await fetch('data/news.json',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(!j.items||!j.items.length)return;NEWS=j;renderNews()}catch(e){}
+}
+function pushNews(){if(NEWS)return;const h=HEAD[hi++%HEAD.length];news.unshift({t:now(),k:h[0],g:h[1],m:h[2]});if(news.length>30)news.pop()}
 
 function tick(){
   tk++;
@@ -354,8 +376,9 @@ function render(){
   if(API&&S.book){const A=S.book.asks.slice().reverse(),B=S.book.bids,rw=(x,c)=>'<tr><td class="'+c+'">'+x[0].toFixed(2)+'</td><td>'+x[1]+'</td></tr>';
     bk='<tr><th>Price</th><th>Size</th></tr>'+A.map(x=>rw(x,'dn')).join('')+'<tr><td class="mute" colspan="2">spread '+(A.length&&B.length?(S.book.asks[0][0]-B[0][0]).toFixed(2):'-')+'</td></tr>'+B.map(x=>rw(x,'up')).join('')}
   $('#book').innerHTML=bk;
-  $('#news').innerHTML='<tr><th>Time</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline (sample)</th></tr>'+news.slice(0,3).map(x=>'<tr><td>'+x.t+'</td><td><span class="pill '+(x.k==='ADVERSE'?'bad':'lock')+'">'+x.k+'</span></td><td>'+x.g+'</td><td class="w">'+x.m+'</td></tr>').join('');
-  $('#tape').innerHTML=HEAD.map(h=>'<span>SAMPLE · <b class="'+(h[0]==='ADVERSE'?'dn':'mute')+'">'+h[0]+'</b> · '+h[2]+'</span>').join('');
+  if(!NEWS)$('#news').innerHTML='<tr><th>Time</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline (sample)</th></tr>'+news.slice(0,3).map(x=>'<tr><td>'+x.t+'</td><td><span class="pill '+(x.k==='ADVERSE'?'bad':'lock')+'">'+x.k+'</span></td><td>'+x.g+'</td><td class="w">'+x.m+'</td></tr>').join('');
+  if(NEWS)renderNews();
+  if(!NEWS)$('#tape').innerHTML=HEAD.map(h=>'<span>SAMPLE · <b class="'+(h[0]==='ADVERSE'?'dn':'mute')+'">'+h[0]+'</b> · '+h[2]+'</span>').join('');
   $('#blotter').innerHTML='<tr><th>Order</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,30).map(o=>'<tr title="'+H(o.t+' · '+o.src+(o.why?' · '+o.why:''))+'"><td>#'+o.id.slice(4)+(o.src==='AI-STUB'?' <span class="mute">AI</span>':'')+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+pxCell(o)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+o.st+'">'+({FILLED:'FILL',REJECTED_RISK:'VETO',ACKED:'OPEN',PARTIALLY_FILLED:'PART',CANCELLED:'CXL'}[o.st]||o.st)+'</span></td></tr>'+(o.st==='REJECTED_RISK'&&o===S.orders[0]?'<tr><td colspan="6" class="w dn" style="font-size:11px">'+H(o.why)+(FUNDABLE.includes(o.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':'')+'</td></tr>':'')).join('')||'<tr><td colspan="6" class="mute w">No simulated orders yet. Place one from the ticket or start stub signals.</td></tr>');
   $('#pos').innerHTML='<tr><th>Instrument</th><th>Qty</th><th>Unrealized</th></tr>'+(ps.map(([s,p])=>{const u=(inst(s).p-p.avg)*p.q;return'<tr title="avg '+p.avg.toFixed(2)+'"><td>'+s+'</td><td>'+p.q+'</td><td class="'+cls(u)+'">'+inr(u)+'</td></tr>'}).join('')||'<tr><td colspan="3" class="mute w">Flat. No simulated positions.</td></tr>');
   const rows=a=>'<tr><th>Time</th><th>Event</th><th style="text-align:left">Detail</th></tr>'+(a.map(x=>'<tr><td>'+x.t+'</td><td>'+x.k+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="3" class="mute">Nothing recorded yet.</td></tr>');
@@ -378,16 +401,19 @@ function render(){
   $('#risk').innerHTML='<tr><th>Limit</th><th>Value</th><th>Source</th><th>Used now</th><th>Usage</th></tr>'+R.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td>'+(r[2]?'<span class="pill warn">proposed</span>':'<span class="mute">fixed by you</span>')+'</td><td>'+r[3]+'</td><td>'+(r[4]||'<span class="mute">-</span>')+'</td></tr>').join('');
 }
 
-/* connector: real listings and ownership links from data/connector.json (built by tools/build_connector.py) */
+/* connector: real listings and company relationships (built by tools/build_connector.py) */
 const H=x=>String(x==null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const GROUPS=['parent','subsidiary','associate','joint venture','joint venture partner','investor','fellow subsidiary','owner','owned company','group or related party'];
+C.links={};C.filter='all';
 async function loadConnector(){
   try{const r=await fetch('data/connector.json',{cache:'no-store'});if(!r.ok)throw 0;C.data=await r.json()}
   catch(e){$('#web').innerHTML='<div class="body"><div class="empty">Connector data is not built yet. It builds automatically when the Codespace starts (a few minutes on first start), then refresh this page.</div></div>';return}
   C.idx={};C.data.c.forEach(x=>{C.idx[x[0]]=x});
-  $('#cList').innerHTML=C.data.c.map(x=>'<option value="'+H((x[1]||x[2])+' · '+x[3])+'">').join('');
-  const nl=Object.values(C.data.l).filter(v=>v.length).length;
-  $('#cSrc').textContent=C.data.c.length+' COMPANIES · '+nl+' WITH LINKS';$('#cSrc').title=C.data.note+' Built '+C.data.asof+'.';
-  const rel=C.data.c.find(x=>x[1]==='RELIANCE');if(rel&&!C.isin)C.isin=rel[0];renderWeb();renderDetail()
+  const ordered=C.data.c.slice().sort((a,b)=>(b[5].includes('NIFTY 50')-a[5].includes('NIFTY 50'))||(b[4]-a[4]));
+  $('#cList').innerHTML=ordered.map(x=>'<option value="'+H((x[1]||x[2])+' · '+x[3])+'">').join('');
+  const nl=C.data.c.filter(x=>x[4]>0).length;
+  $('#cSrc').textContent=C.data.c.length+' COMPANIES · '+nl+' WITH LINKS';$('#cSrc').title=C.data.note+(C.data.rpt?' NSE related-party file: '+C.data.rpt+'.':'')+' Built '+C.data.asof+'.';
+  const rel=C.data.c.find(x=>x[1]==='RELIANCE');if(rel&&!C.isin)C.isin=rel[0];renderWeb();
 }
 function findCompany(q){
   if(!C.data)return null;q=q.trim().toUpperCase();if(!q)return null;
@@ -395,15 +421,31 @@ function findCompany(q){
   return C.data.c.find(x=>x[1]===code||x[2]===code||x[0]===code)||C.data.c.find(x=>x[3].toUpperCase()===q)||C.data.c.find(x=>x[3].toUpperCase().includes(q))||null;
 }
 const codes=x=>(x[1]?'NSE '+H(x[1]):'')+(x[1]&&x[2]?' · ':'')+(x[2]?'BSE '+H(x[2]):'');
-function renderWeb(){
+async function getLinks(isin){
+  if(C.links[isin])return C.links[isin];
+  const me=C.idx[isin];if(!me||!me[4])return C.links[isin]=[];
+  try{const r=await fetch('data/links/'+encodeURIComponent(isin)+'.json',{cache:'no-store'});return C.links[isin]=r.ok?await r.json():[]}catch(e){return[]}
+}
+const grpOf=x=>x[2].split(' / ')[0];
+async function renderWeb(){
   if(!C.data)return;
-  const me=C.idx[C.isin];if(!me){$('#web').innerHTML='<div class="body"><div class="empty">Type an NSE symbol, BSE code or company name in the search box, then press Enter.</div></div>';renderDetail();return}
-  const links=C.data.l[C.isin]||[],L=[],R=[];
-  links.forEach((x,k)=>{(x[1]&&C.idx[x[1]]?R:L).push([x,k])});
-  const node=([x,k],listed)=>{const o=listed?C.idx[x[1]]:null;return'<li><button class="node'+(C.pick===k?' on':'')+'" data-node="'+k+'"><span class="rel">'+H(x[2])+'</span>'+H(listed?o[3]:x[0])+'<small>'+(listed?codes(o)+' · ':'')+H(x[3])+'</small></button></li>'};
-  const empty='<li class="mute" style="padding:6px 10px">None found</li>';
-  $('#web').innerHTML=(links.length?'':'<div class="body"><div class="empty">No ownership links found for this company in Wikidata, GLEIF or the annual-report file. Supplier and customer links are not available from free sources.</div></div>')
-    +'<div class="web"><ul class="L">'+(L.map(n=>node(n,false)).join('')||empty)+'</ul><div class="hub"><b>'+H(me[1]||me[2])+'</b>'+H(me[3])+'<br><span class="mute">'+codes(me)+'</span></div><ul class="R">'+(R.map(n=>node(n,true)).join('')||empty)+'</ul></div>';
+  const me=C.idx[C.isin];
+  if(!me){$('#cFilt').innerHTML='';$('#web').innerHTML='<div class="body"><div class="empty">Type an NSE symbol, BSE code or company name in the search box, then press Enter.</div></div>';renderDetail();return}
+  const isin=C.isin,links=await getLinks(isin);if(isin!==C.isin)return;
+  const cnt={};links.forEach(x=>{const g=grpOf(x);cnt[g]=(cnt[g]||0)+1});
+  const gs=GROUPS.filter(g=>cnt[g]);if(C.filter!=='all'&&!cnt[C.filter])C.filter='all';
+  $('#cFilt').innerHTML='<button class="btn sm'+(C.filter==='all'?' pri':'')+'" data-flt="all">All '+links.length+'</button>'+gs.map(g=>'<button class="btn sm'+(C.filter===g?' pri':'')+'" data-flt="'+H(g)+'">'+H(g)+' '+cnt[g]+'</button>').join('');
+  const shown=links.map((x,k)=>[x,k]).filter(([x])=>C.filter==='all'||grpOf(x)===C.filter);
+  const side=listed=>{const items=shown.filter(([x])=>!!(x[1]&&C.idx[x[1]])===listed);if(!items.length)return'<div class="mute" style="padding:6px 0">None</div>';
+    return GROUPS.filter(g=>items.some(([x])=>grpOf(x)===g)).map(g=>{const it=items.filter(([x])=>grpOf(x)===g);
+      return'<div class="grp">'+H(g)+' · '+it.length+'</div><div class="chips">'+it.map(([x,k])=>{const o=listed?C.idx[x[1]]:null;
+        return'<button class="chip'+(C.pick===k?' on':'')+'" data-node="'+k+'" title="'+H((listed?o[3]:x[0])+' · '+x[2]+' · '+x[3])+'">'+H(listed?o[3]:x[0])+(listed?' <small>'+H(o[1]||o[2])+'</small>':'')+'</button>'}).join('')+'</div>'}).join('')};
+  const tags=me[5]?me[5].split('|').map(t=>'<span class="pill sim" style="margin:2px">'+H(t)+'</span>').join(''):'';
+  $('#web').innerHTML=(links.length?'':'<div class="body"><div class="empty">No company links found for this company in NSE related-party filings, Wikidata, GLEIF or the annual-report file.</div></div>')
+    +'<div style="display:grid;grid-template-columns:1fr minmax(170px,210px) 1fr;gap:8px;flex:1;min-height:0;height:100%">'
+    +'<div class="side2"><div class="colh" style="padding:4px 0">Not listed</div>'+side(false)+'</div>'
+    +'<div class="hub" style="align-self:center;margin:0;max-width:none"><b>'+H(me[1]||me[2])+'</b>'+H(me[3])+'<br><span class="mute">'+codes(me)+'</span><div>'+tags+'</div></div>'
+    +'<div class="side2"><div class="colh" style="padding:4px 0;text-align:right">Listed · NSE / BSE</div>'+side(true)+'</div></div>';
   renderDetail();
 }
 function chart(rows){
@@ -419,18 +461,18 @@ async function history(sym){
     return C.hist[sym]={rows,notes}}catch(e){return{rows:[],notes:[]}}
 }
 async function renderDetail(){
-  const me=C.data&&C.idx[C.isin],links=me?(C.data.l[C.isin]||[]):[];
-  if(!me||C.pick===null||!links[C.pick]){$('#dCode').textContent='';$('#dBody').innerHTML='<div class="empty">Click a connected company to open its history.</div>';return}
-  const x=links[C.pick],o=x[1]?C.idx[x[1]]:null;
-  if(!o){$('#dCode').textContent='UNLISTED';$('#dBody').innerHTML='<b style="font-size:16px">'+H(x[0])+'</b><p class="note">'+H(x[2])+' of '+H(me[3])+' · source: '+H(x[3])+'. Not listed on NSE or BSE, so there is no exchange code or price history.</p>';return}
+  const me=C.data&&C.idx[C.isin],links=me?(C.links[C.isin]||[]):[];
+  if(!me||C.pick===null||!links[C.pick]){$('#dCode').textContent='';$('#dBody').innerHTML='<div class="empty">Click a connected company to open its details and price history.</div>';return}
+  const x=links[C.pick],o=x[1]?C.idx[x[1]]:null,src='<div class="note">Relationship: <b>'+H(x[2])+'</b> of '+H(me[3])+'<br>Source: '+H(x[3]).split(' + ').join('<br>Source: ')+'</div>';
+  if(!o){$('#dCode').textContent='UNLISTED';$('#dBody').innerHTML='<b style="font-size:16px">'+H(x[0])+'</b>'+src+'<p class="note">Not listed on NSE or BSE (no exact name match in the exchange lists), so there is no exchange code or price history.</p>';return}
   $('#dCode').innerHTML=codes(o);
-  const head='<b style="font-size:16px">'+H(o[3])+'</b> <span class="mute">· '+H(x[2])+' of '+H(me[3])+' · source: '+H(x[3])+'</span> <button class="btn sm" data-open="'+H(o[0])+'">Open its connections</button>';
+  const head='<b style="font-size:16px">'+H(o[3])+'</b> <button class="btn sm" data-open="'+H(o[0])+'">Open its connections</button>'+(o[5]?' '+o[5].split('|').map(t=>'<span class="pill sim">'+H(t)+'</span>').join(' '):'')+src;
   $('#dBody').innerHTML=head+'<div class="empty" style="margin-top:6px">Loading price history…</div>';
   const h=o[1]?await history(o[1]):{rows:[],notes:[]};
-  if(C.data.l[C.isin][C.pick]!==x)return;
+  if((C.links[C.isin]||[])[C.pick]!==x)return;
   const last=h.rows[h.rows.length-1];
   $('#dBody').innerHTML=head+(h.rows.length>1?chart(h.rows)+'<table style="margin-top:4px"><tr><th>Last date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr><tr><td>'+last[0]+'</td><td>'+last[1].toFixed(2)+'</td><td>'+last[2].toFixed(2)+'</td><td>'+last[3].toFixed(2)+'</td><td>'+last[4].toFixed(2)+'</td><td>'+last[5].toLocaleString('en-IN')+'</td></tr></table>'+(h.notes.length?'<p class="note dn">'+h.notes.map(H).join('<br>')+'</p>':'')
-    :'<div class="empty" style="margin-top:6px">No NSE price history loaded for this company'+(o[1]?'':' (it has a BSE code only)')+'.</div>')
+    :'<div class="empty" style="margin-top:6px">No NSE price history loaded for this company'+(o[1]?' yet (history builds in the background on first start)':' (it has a BSE code only)')+'.</div>')
     +'<div class="g3">'+['Financials','Corporate actions','Shareholding'].map(t=>'<div><div class="colh" style="padding:0 0 3px">'+t+'</div><div class="empty">Not loaded: no verified free source yet.</div></div>').join('')+'</div>';
 }
 function curve(){
@@ -502,7 +544,7 @@ async function initApi(){
     render();setInterval(poll,1000);setInterval(()=>{if(++tk%6===0)pushNews()},1000)}catch(e){}
 }
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-act],[data-sel],[data-cx],[data-st],[data-amt],[data-node],[data-open]');if(!t)return;
+  const t=e.target.closest('[data-act],[data-sel],[data-cx],[data-st],[data-amt],[data-node],[data-open],[data-flt]');if(!t)return;
   const d=t.dataset;
   if(d.act)ACT[d.act]();
   else if(d.sel){S.sel=+d.sel;$('#tSym').value=I[S.sel].s;render();if(API)poll()}
@@ -511,10 +553,11 @@ document.addEventListener('click',e=>{
   else if(d.st){const x=STR[+d.st];x.on=!x.on;log('STRATEGY',x.n+(x.on?' enabled':' disabled')+' in SIM');render()}
   else if(d.amt){$('#fAmt').value=d.amt}
   else if(d.node!==undefined){C.pick=+d.node;renderWeb()}
-  else if(d.open){C.isin=d.open;C.pick=null;$('#cQ').value='';renderWeb()}
+  else if(d.open){C.isin=d.open;C.pick=null;C.filter='all';$('#cQ').value='';renderWeb()}
+  else if(d.flt){C.filter=d.flt;C.pick=null;renderWeb()}
 });
 $('#tSym').innerHTML=I.map(i=>'<option>'+i.s+'</option>').join('');
-const cSearch=()=>{const c=findCompany($('#cQ').value);if(c){C.isin=c[0];C.pick=null;renderWeb()}};
+const cSearch=()=>{const c=findCompany($('#cQ').value);if(c){C.isin=c[0];C.pick=null;C.filter='all';renderWeb()}};
 $('#cQ').addEventListener('change',cSearch);$('#cQ').addEventListener('keydown',e=>{if(e.key==='Enter')cSearch()});
 loadConnector();
 function route(){const v=(location.hash||'#terminal').slice(1),ok=document.getElementById('v-'+v)?v:'terminal';document.querySelectorAll('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+ok));document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+ok))}
@@ -541,6 +584,7 @@ async function loadReports(){
 loadReports();
 log('SYSTEM','Preview started in SIMULATION mode with '+inr(START)+' demo funds');
 for(let k=0;k<4;k++)pushNews();
+loadNews();setInterval(loadNews,30000);
 render();timer=setInterval(tick,1000);initApi();
 </script>
 </body>

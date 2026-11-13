@@ -6,12 +6,18 @@ bhavcopy), matched by ISIN. Links (ownership only; no supplier or customer data)
   * Wikidata  (has subsidiary P355, parent organization P749, owned by P127, owner of P1830)
   * GLEIF     (direct parent / direct children), for companies whose LEI is in Wikidata
   * tools/connector_annual_reports.csv  (manually sourced annual-report lists)
+  * NSE bulk related-party file (Regulation 23(9) filings, all NSE companies): subsidiaries,
+    associates, joint ventures, holding/parent, fellow subsidiaries, group entities. People
+    (directors, KMP, relatives) are excluded.
+Index membership (NIFTY 50 ... NIFTY 500, Midcap 150, Smallcap 250) is attached to each company.
 A link shown on one company is also shown in reverse on the other company.
+Output: web/data/connector.json (listings) and web/data/links/<ISIN>.json (links per company).
 Usage: build_connector.py [--out web/data/connector.json] [--date YYYY-MM-DD]
 """
-import argparse, csv, datetime as dt, io, json, os, sys, time, urllib.error, urllib.parse, urllib.request
+import argparse, csv, datetime as dt, http.cookiejar, io, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fetch_nse import HEADERS   # noqa: E402
+import xlsx_lite   # noqa: E402
 
 NSE_LIST = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 BSE_CM = "https://www.bseindia.com/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_{ymd}_F_0000.CSV"
@@ -22,7 +28,58 @@ WD_UA = {"User-Agent": "Margin_call-connector/0.2 (private research; GitHub USCr
 REL = {"P355": "subsidiary", "P749": "parent", "P127": "owner", "P1830": "owned company"}
 REVERSE = {"subsidiary": "parent", "parent": "subsidiary", "owner": "owned company", "owned company": "owner",
            "associate": "investor", "investor": "associate", "joint venture": "joint venture partner",
-           "joint venture partner": "joint venture"}
+           "joint venture partner": "joint venture", "fellow subsidiary": "fellow subsidiary",
+           "group or related party": "group or related party"}
+INDEXES = [("NIFTY 50", "nifty50"), ("NIFTY NEXT 50", "niftynext50"), ("NIFTY 100", "nifty100"), ("NIFTY 200", "nifty200"),
+           ("NIFTY 500", "nifty500"), ("NIFTY MIDCAP 150", "niftymidcap150"), ("NIFTY SMALLCAP 250", "niftysmallcap250")]
+INDEX_URL = "https://nsearchives.nseindia.com/content/indices/ind_{}list.csv"
+RPT_PAGE = "https://www.nseindia.com/static/regulations/listing-compliance"
+# Relationship text in the filings is free text (about 6,700 variants). These rules map it to a group;
+# the original wording is kept. People are excluded by relationship words AND by requiring an entity-like name.
+PERSON_REL = re.compile(r"director|\bkmp\b|key manag|relative|secretary|chief|\bcfo\b|\bceo\b|managing|whole[- ]?time|"
+                        r"independent|chairman|chairperson|executive|personnel|individual|spouse|son of|daughter|wife|husband|"
+                        r"\bhuf\b|employee|officer|member of", re.I)
+ENTITY_NAME = re.compile(r"\b(limited|ltd|llp|private|pvt|inc|corp|corporation|company|co\.|trust|fund|bank|gmbh|s\.?a\.?|llc|plc|"
+                         r"b\.?v\.?|pte|holdings?|ventures|industries|foundation|enterprises|society|partners|ag|n\.?v\.?|"
+                         r"s\.?p\.?a|sdn|bhd|kk|oy|ab|as|srl|sarl|pty|lp|group|association|authority|government|board)\b", re.I)
+def classify(rel):
+    r = rel.lower()
+    if "fellow" in r or "subsidiary of ultimate" in r or "subsidiary of holding" in r or "subsidiaries of ultimate" in r \
+            or "subsidiary of the holding" in r or "subsidiary of a holding" in r or "subsidiary of parent" in r:
+        return "fellow subsidiary"
+    if "over entity" in r or "over the entity" in r or "over the company" in r or "over the listed" in r:
+        return "group or related party"   # an investor with control/influence over the company
+    if "joint venture" in r or "joint control" in r or re.search(r"\bjv\b", r):
+        return "joint venture"
+    if "associate" in r and "holding" not in r and "parent" not in r:
+        return "associate"
+    if "associate" in r:
+        return "group or related party"   # e.g. associate of the holding company
+    if re.search(r"holding company|parent|ultimate holding|holding entity", r) and "subsidiar" not in r.replace("holding subsidiary", ""):
+        return "parent"
+    if "subsidiar" in r or "step down" in r or "step-down" in r or "wos" in r:
+        return "subsidiary"
+    return "group or related party"
+def fetch_rpt(cache_dir):
+    """Newest NSE bulk related-party workbook. Returns (rows iterator, label) or (None, reason)."""
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    def g(u, timeout=240):
+        with op.open(urllib.request.Request(u, headers=HEADERS), timeout=timeout) as r: return r.read()
+    try:
+        page = g(RPT_PAGE).decode("utf-8", "replace")
+    except Exception as e:
+        return None, f"listing-compliance page unreachable: {e}"
+    found = re.findall(r'Related Party Transactions as on ([^<]+?)</[^>]+>.{0,600}?href="([^"]+)"', page, re.S)
+    if not found:
+        return None, "no related-party file link found on the NSE page"
+    label, url = found[0][0].replace("&nbsp;", " ").strip(), found[0][1]
+    path = os.path.join(cache_dir, re.sub(r"[^A-Za-z0-9]+", "_", label) + ".xlsx")
+    if not os.path.exists(path):
+        try:
+            open(path, "wb").write(g(url))
+        except Exception as e:
+            return None, f"download failed: {e}"
+    return xlsx_lite.rows(path), label
 
 
 def get(url, headers=None, data=None, tries=3):
@@ -73,6 +130,14 @@ def main():
                 c = comp.setdefault(r["ISIN"].strip(), {"n": r["FinInstrmNm"].strip(), "nse": "", "bse": ""})
                 c["bse"] = r["FinInstrmId"].strip()
             break
+    idx_of = {}
+    for label, slug in INDEXES:
+        t = get(INDEX_URL.format(slug), tries=2)
+        if not t: print(f"index list unavailable: {label}"); continue
+        for r in csv.DictReader(io.StringIO(t)):
+            i = (r.get("ISIN Code") or "").strip()
+            if i: idx_of.setdefault(i, []).append(label)
+    print(f"index membership loaded for {len(idx_of)} companies")
     print(f"listings: {n_nse} NSE, {sum(1 for c in comp.values() if c['bse'])} with BSE code (BSE file {bse_day}), {len(comp)} total")
 
     by_nse = {c["nse"]: i for i, c in comp.items() if c["nse"]}
@@ -168,6 +233,43 @@ def main():
                 g_links += 1
     print(f"GLEIF: {g_links} links")
 
+    # ---- NSE bulk related-party filings ----
+    norm_name = lambda n: re.sub(r"[^a-z0-9 ]", "", " ".join(n.casefold().replace("limited", "ltd").replace(".", " ").split()))
+    by_name = {}
+    for i, c in comp.items(): by_name.setdefault(norm_name(c["n"]), i)
+    os.makedirs(".cache/nse", exist_ok=True)
+    it, label = fetch_rpt(".cache/nse")
+    n_rpt = n_people = n_rows = 0
+    rpt_label = None
+    if it is None:
+        print("NSE related-party file not used:", label)
+    else:
+        rpt_label = label
+        hdr = next(it)
+        col = {h.strip(): k for k, h in enumerate(hdr)}
+        need = ["SYMB_SYMBOL", "Details of the counterparty_Name", "Relationship of the counterparty with the listed entity or its subsidiary"]
+        if any(h not in col for h in need):
+            print("NSE related-party file: expected columns missing; file format changed:", [h for h in need if h not in col])
+        else:
+            cs, cn, cr = (col[h] for h in need)
+            seen = set()
+            for r in it:
+                n_rows += 1
+                if len(r) <= max(cs, cn, cr): continue
+                sym, name, rel = r[cs].strip(), " ".join(r[cn].split()), " ".join(r[cr].split())
+                isin = by_nse.get(sym)
+                if not isin or not name or not rel: continue
+                if PERSON_REL.search(rel) or not ENTITY_NAME.search(name):
+                    n_people += 1; continue
+                key = (isin, name.casefold(), rel.casefold())
+                if key in seen: continue
+                seen.add(key)
+                grp = classify(rel)
+                other = by_name.get(norm_name(name), "")
+                add_both(isin, comp[isin]["n"], other, name, grp, f"NSE RPT filing ({label}): {rel}")
+                n_rpt += 1
+        print(f"NSE related-party file ({label}): {n_rows} rows, {n_rpt} company links kept, {n_people} people/other rows excluded")
+
     # ---- annual reports ----
     here = os.path.dirname(os.path.abspath(__file__))
     n_ar = 0
@@ -179,12 +281,23 @@ def main():
                 n_ar += 1
     print(f"annual-report links: {n_ar}")
 
-    out = {"asof": str(dt.date.today()), "bse_file": str(bse_day) if bse_day else None,
-           "note": "Ownership links only. Supplier and customer links are not available from free sources.",
-           "c": [[isin, c["nse"], c["bse"], c["n"]] for isin, c in sorted(comp.items(), key=lambda kv: kv[1]["nse"] or kv[1]["n"])],
-           "l": links}
+    link_dir = os.path.join(os.path.dirname(a.out), "links")
+    os.makedirs(link_dir, exist_ok=True)
+    for f in os.listdir(link_dir): os.remove(os.path.join(link_dir, f))
+    for isin, lst in links.items():
+        if lst: json.dump(lst, open(os.path.join(link_dir, isin + ".json"), "w"), separators=(",", ":"))
+    out = {"asof": str(dt.date.today()), "bse_file": str(bse_day) if bse_day else None, "rpt": rpt_label,
+           "note": "Company relationships from NSE related-party filings, Wikidata, GLEIF and annual-report lists. "
+                   "No supplier or customer data. People are excluded.",
+           "c": [[isin, c["nse"], c["bse"], c["n"], len(links.get(isin, [])), "|".join(idx_of.get(isin, []))]
+                 for isin, c in sorted(comp.items(), key=lambda kv: kv[1]["nse"] or kv[1]["n"])]}
     json.dump(out, open(a.out, "w"), separators=(",", ":"))
-    print(f"wrote {a.out}: {len(comp)} companies, {sum(1 for v in links.values() if v)} with at least one link")
+    with_links = sum(1 for v in links.values() if v)
+    n50 = [i for i, v in idx_of.items() if "NIFTY 50" in v]
+    print(f"wrote {a.out}: {len(comp)} companies, {with_links} with at least one link")
+    print(f"NIFTY 50 coverage: {sum(1 for i in n50 if links.get(i))} of {len(n50)} have links")
+    for i in n50[:50]:
+        print(f"   {comp.get(i, {}).get('nse', i):12} {len(links.get(i, [])):4} links")
 
 
 if __name__ == "__main__":

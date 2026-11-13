@@ -47,14 +47,19 @@ jobs:
         run: cmake -S . -B build -DMC_WERROR=ON && cmake --build build -j"$(nproc)" --target mc_server
       - name: Starting prices and 10 days of history
         run: python3 tools/fetch_latest.py --days 10 && cat data/latest/instruments.csv && cat web/data/history/_index.json
-      - name: Connector data
+      - name: Connector data (listings, NSE related-party filings, Wikidata, GLEIF)
         run: python3 tools/build_connector.py
+      - name: Adverse-media feed (NSE filings must work; GDELT may be refused from shared runners)
+        run: python3 tools/fetch_news.py && python3 -c "import json;j=json.load(open('web/data/news.json'));print(j['status']);print(len(j['items']),'items');[print(' ',x['tag'],x['topic'],x['title'][:100]) for x in j['items'][:8]]"
       - name: Server uses the real closes
         run: |
           ./build/mc_server --web web --port 8098 & sleep 2
           curl -fsS localhost:8098/api/state | grep -q 'NSE close'
           curl -fsS localhost:8098/data/connector.json | head -c 300; echo
           curl -fsS "localhost:8098/data/history/RELIANCE.csv" | head -3
+          ISIN=$(python3 -c "import json;print(next(c[0] for c in json.load(open('web/data/connector.json'))['c'] if c[1]=='RELIANCE'))")
+          curl -fsS "localhost:8098/data/links/$ISIN.json" | head -c 400; echo
+          curl -fsS localhost:8098/data/news.json | head -c 300; echo
           kill %1
       - name: Upload connector and price samples
         uses: actions/upload-artifact@v4
@@ -63,4 +68,6 @@ jobs:
           path: |
             data/latest/instruments.csv
             web/data/connector.json
+            web/data/links/
+            web/data/news.json
             web/data/history/_index.json
