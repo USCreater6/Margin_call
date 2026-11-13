@@ -86,9 +86,11 @@ def main():
     def add(isin, name, other_isin, rel, src):
         if other_isin == isin: return
         lst = links.setdefault(isin, [])
-        key = (other_isin or " ".join(name.casefold().replace(".", " ").split()), rel)
-        for row in lst:
-            if (row[1] or " ".join(row[0].casefold().replace(".", " ").split()), row[2]) == key:
+        norm = lambda n: " ".join(n.casefold().replace(".", " ").replace(" limited", " ltd").split())
+        key = other_isin or norm(name)
+        for row in lst:   # one row per company; relations and sources are merged
+            if (row[1] or norm(row[0])) == key:
+                if rel not in row[2].split(" / "): row[2] += " / " + rel
                 if src not in row[3].split(" + "): row[3] += " + " + src
                 return
         lst.append([name, other_isin or "", rel, src])
