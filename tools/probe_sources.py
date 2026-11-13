@@ -1,54 +1,36 @@
 #!/usr/bin/env python3
-"""Second probe: commodity alternative to MCX, lot sizes, ownership-data coverage. Diagnostic only."""
-import csv, io, json, sys, urllib.parse, urllib.request, zipfile
-UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-      "Accept": "*/*", "Referer": "https://www.nseindia.com/all-reports"}
-D = sys.argv[1]
-def get(url, headers=None):
-    h = dict(UA); h.update(headers or {})
+"""Probe 3: NIFTY index lists, NSE bulk related-party file, GDELT adverse news, NSE announcements. Diagnostic only."""
+import http.cookiejar, io, json, re, sys, urllib.parse, urllib.request, zipfile
+UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+cj = http.cookiejar.CookieJar()
+op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+def get(url, ref="https://www.nseindia.com/", accept="*/*", show=300):
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=60) as r:
-            b = r.read()
-            if b[:2] == b"PK":
-                z = zipfile.ZipFile(io.BytesIO(b)); b = z.read(z.namelist()[0])
-            print(f"\n### OK {url} bytes={len(b)}"); return b.decode("utf-8", "replace")
+        with op.open(urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept, "Referer": ref, "Accept-Language": "en-US,en;q=0.9"}), timeout=60) as r:
+            b = r.read(); print(f"\n### OK {r.status} {url} bytes={len(b)} type={r.headers.get('Content-Type')}")
+            if show: print(b[:show].decode("utf-8", "replace"))
+            return b
     except Exception as e:
         print(f"\n### FAIL {url} {e}"); return None
-
-fo = get(f"https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{D}_F_0000.csv.zip")
-for r in csv.DictReader(io.StringIO(fo or "")):
-    if r["TckrSymb"] in ("NIFTY",) and r["FinInstrmTp"] == "IDF": print("  NIFTY", r["FinInstrmNm"], "close", r["ClsPric"], "settle", r["SttlmPric"], "lot", r["NewBrdLotQty"])
-    if r["TckrSymb"] in ("RELIANCE", "HDFCBANK", "TCS") and r["FinInstrmTp"] == "STF": print("  STF", r["FinInstrmNm"], "lot", r["NewBrdLotQty"])
-for u in (f"https://nsearchives.nseindia.com/content/com/BhavCopy_NSE_COM_0_0_0_{D}_F_0000.csv.zip",
-          f"https://nsearchives.nseindia.com/content/commodity/BhavCopy_NSE_COM_0_0_0_{D}_F_0000.csv.zip"):
-    t = get(u)
-    if t:
-        rows = list(csv.DictReader(io.StringIO(t)))
-        print("  columns:", list(rows[0].keys())[:20] if rows else None)
-        print("  tickers:", sorted({r.get("TckrSymb", "") for r in rows})[:80])
-        for r in rows:
-            if any(k in r.get("TckrSymb", "") for k in ("GOLD", "CRUDE")) and r.get("FinInstrmTp", "") in ("IDF", "FUTCOM", "CMF", "FUT", "COF"):
-                print("   ", r.get("FinInstrmTp"), r.get("FinInstrmNm"), "close", r.get("ClsPric"), "lot", r.get("NewBrdLotQty"))
-eq = get("https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv")
-isin = {r["SYMBOL"]: r[" ISIN NUMBER"].strip() for r in csv.DictReader(io.StringIO(eq or ""))}
-print("  NSE equities listed:", len(isin), " RELIANCE ISIN:", isin.get("RELIANCE"))
-g = get("https://api.gleif.org/api/v1/lei-records?filter%5Bentity.legalAddress.country%5D=IN&page%5Bsize%5D=1")
-if g: print("  GLEIF India LEI records total:", json.loads(g)["meta"]["pagination"]["total"])
-for s in ("RELIANCE", "HDFCBANK", "TCS"):
-    t = get("https://api.gleif.org/api/v1/lei-records?filter%5Bisin%5D=" + isin.get(s, ""))
-    if t:
-        d = json.loads(t)["data"]
-        print(f"  GLEIF by ISIN {s}: {len(d)} record(s)", [x["attributes"]["entity"]["legalName"]["name"] for x in d][:2])
-        if d:
-            lei = d[0]["id"]
-            for rel in ("direct-children", "direct-parent", "ultimate-children"):
-                c = get(f"https://api.gleif.org/api/v1/lei-records/{lei}/{rel}?page%5Bsize%5D=200")
-                if c:
-                    j = json.loads(c); dd = j.get("data") or []
-                    dd = dd if isinstance(dd, list) else [dd]
-                    print(f"    {rel}: total {j.get('meta',{}).get('pagination',{}).get('total', len(dd))}", [x["attributes"]["entity"]["legalName"]["name"] for x in dd][:6])
-q = """SELECT (COUNT(DISTINCT ?c) AS ?onNSE) (COUNT(DISTINCT ?l) AS ?withLinks) WHERE {
-  ?ex rdfs:label "National Stock Exchange of India"@en . ?c p:P414/ps:P414 ?ex .
-  OPTIONAL { ?c wdt:P355|wdt:P749|wdt:P127|wdt:P1830 ?x . BIND(?c AS ?l) } }"""
-print(get("https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q),
-          {"User-Agent": "Margin_call-probe/0.1 (research)", "Accept": "application/sparql-results+json"}))
+for n in ("nifty50", "niftynext50", "nifty100", "nifty200", "nifty500", "niftymidcap150", "niftysmallcap250", "niftytotalmarket"):
+    get(f"https://nsearchives.nseindia.com/content/indices/ind_{n}list.csv", show=120)
+get("https://www.nseindia.com/", show=0)   # cookie warm-up
+page = get("https://www.nseindia.com/static/regulations/listing-compliance", show=0)
+if page:
+    t = page.decode("utf-8", "replace")
+    for m in re.finditer(r'href="([^"]+)"[^>]*>[^<]*</a>', t):
+        pass
+    for m in re.finditer(r'Related Party Transactions as on ([^<]+?)</[^>]+>.{0,600}?href="([^"]+)"', t, re.S):
+        print("  RPT:", m.group(1).strip(), "->", m.group(2))
+    print("  any 'Related Party' mentions:", len(re.findall("Related Party", t)))
+    for u in sorted(set(re.findall(r'https?://[^"\']+?(?:\.zip|\.xlsx|\.xls|\.csv)', t)))[:40]: print("  file:", u)
+get("https://www.nseindia.com/api/annual-reports?index=equities&symbol=RELIANCE", ref="https://www.nseindia.com/companies-listing/corporate-filings-annual-reports", accept="application/json", show=500)
+get("https://www.nseindia.com/api/corporate-announcements?index=equities&symbol=RELIANCE&from_date=01-11-2026&to_date=13-11-2026", ref="https://www.nseindia.com/companies-listing/corporate-filings-announcements", accept="application/json", show=500)
+q = '(sourcecountry:IN) (stock OR shares OR sebi OR nse OR bse OR rbi OR fraud OR probe OR default OR downgrade OR penalty) tone<-3'
+b = get("https://api.gdeltproject.org/api/v2/doc/doc?" + urllib.parse.urlencode({"query": q, "mode": "ArtList", "format": "json", "maxrecords": "20", "timespan": "1d", "sort": "DateDesc"}), ref="", show=0)
+if b:
+    try:
+        arts = json.loads(b).get("articles", [])
+        print("  GDELT articles:", len(arts))
+        for a in arts[:8]: print("   ", a.get("seendate"), a.get("domain"), "|", a.get("title", "")[:110], "| keys:", sorted(a.keys()))
+    except Exception as e: print("  GDELT parse error:", e, b[:300])
