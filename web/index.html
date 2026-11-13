@@ -82,6 +82,10 @@ header select{width:auto;font-size:12px}
 .verify{color:var(--warn);font-family:var(--mono);font-size:11px;border:1px solid var(--warn);border-radius:3px;padding:0 4px;white-space:nowrap}
 .big{font-family:var(--mono);font-size:21px;font-weight:500}
 .video{flex:none;width:100%;aspect-ratio:16/9;max-height:52vh;border-bottom:1px solid var(--line);background:var(--row);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px;text-align:center;font-size:12px;color:var(--mute)}
+.tvbar{display:flex;gap:6px;align-items:center;padding:4px 8px;border-bottom:1px solid var(--line);flex:none}
+.tvbar select{flex:1;width:auto}
+.video iframe{width:100%;height:100%;border:0;display:block}
+.video.on{padding:0;background:#000}
 .video .play{width:36px;height:36px;border-radius:50%;border:2px solid var(--mute);flex:none;position:relative}
 .video .play::after{content:"";position:absolute;left:13px;top:9px;border-left:12px solid var(--mute);border-top:7px solid transparent;border-bottom:7px solid transparent}
 footer{flex:none;border-top:1px solid var(--line);background:var(--panel);overflow:hidden;white-space:nowrap;font-family:var(--mono);font-size:12px;padding:2px 0}
@@ -167,7 +171,8 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
   </div></div></div>
   <div class="side">
     <div class="panel"><h2>Adverse media <span class="pill sim" id="newsSrc">SAMPLE</span></h2>
-      <div class="video"><div class="play"></div><select id="chan" aria-label="Channel" style="width:auto"><option>Business news live stream 1</option><option>Business news live stream 2</option><option>Global markets live stream</option></select><div>Video cannot play inside this preview. The built terminal plays the channel's official live stream here.</div></div>
+      <div class="tvbar"><select id="chan" aria-label="TV channel"><option>Loading channels…</option></select><a id="chanOpen" class="btn sm" href="#" target="_blank" rel="noopener noreferrer">Open on YouTube</a></div>
+      <div class="video" id="tv"><div class="play"></div><div id="tvMsg">Channel list is built when the Codespace starts (tools/check_channels.py).</div></div>
       <div class="fix"><table id="news"></table></div>
     </div>
   </div>
@@ -473,7 +478,29 @@ async function renderDetail(){
   const last=h.rows[h.rows.length-1];
   $('#dBody').innerHTML=head+(h.rows.length>1?chart(h.rows)+'<table style="margin-top:4px"><tr><th>Last date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr><tr><td>'+last[0]+'</td><td>'+last[1].toFixed(2)+'</td><td>'+last[2].toFixed(2)+'</td><td>'+last[3].toFixed(2)+'</td><td>'+last[4].toFixed(2)+'</td><td>'+last[5].toLocaleString('en-IN')+'</td></tr></table>'+(h.notes.length?'<p class="note dn">'+h.notes.map(H).join('<br>')+'</p>':'')
     :'<div class="empty" style="margin-top:6px">No NSE price history loaded for this company'+(o[1]?' yet (history builds in the background on first start)':' (it has a BSE code only)')+'.</div>')
-    +'<div class="g3">'+['Financials','Corporate actions','Shareholding'].map(t=>'<div><div class="colh" style="padding:0 0 3px">'+t+'</div><div class="empty">Not loaded: no verified free source yet.</div></div>').join('')+'</div>';
+    +'<div class="g3" id="fund"><div class="empty">Loading fundamentals…</div></div>';
+  const f=o[1]?await fund(o[1]):null;
+  if((C.links[C.isin]||[])[C.pick]!==x)return;
+  $('#fund').outerHTML=fundHtml(f,o[1]);
+}
+async function fund(sym){
+  if(C.fund&&C.fund[sym]!==undefined)return C.fund[sym];C.fund=C.fund||{};
+  try{const r=await fetch('data/fund/'+encodeURIComponent(sym)+'.json',{cache:'no-store'});return C.fund[sym]=r.ok?await r.json():null}catch(e){return null}
+}
+const words=t=>t.replace(/([a-z])([A-Z])/g,'$1 $2');
+function fundHtml(f,sym){
+  const box=(t,b)=>'<div><div class="colh" style="padding:0 0 3px">'+t+'</div>'+b+'</div>';
+  if(!f)return'<div class="g3">'+box('Financials','<div class="empty">'+(sym?'Not fetched for '+H(sym)+' yet. Fundamentals are fetched in the background for NIFTY 500 companies, NIFTY 50 first.':'BSE-only company: no NSE fundamentals.')+'</div>')+box('Corporate actions','')+box('Shareholding','')+'</div>';
+  const fg=f.figures,v=fg&&fg.values||{},keys=Object.keys(v);
+  const fin=keys.length?'<table><tr><th>XBRL element</th><th>₹ crore</th></tr>'+keys.map(k=>'<tr><td title="'+H(k)+'">'+H(words(k))+'</td><td>'+(v[k].unit&&/INR/i.test(v[k].unit)&&!/PerShare/i.test(k)?(v[k].v/1e7).toLocaleString('en-IN',{maximumFractionDigits:2}):v[k].v.toLocaleString('en-IN')+' '+H(v[k].unit))+'</td></tr>').join('')+'</table><p class="note">'+H(fg.basis)+' · '+H(fg.period)+' · <a href="'+H(fg.source)+'" target="_blank" rel="noopener noreferrer">XBRL filing</a></p>'
+    :'<div class="empty">No figures read from the latest XBRL filing.</div>';
+  const res=(f.results||[]).slice(0,6).map(r=>'<tr><td>'+H(r.to)+'</td><td>'+H((r.basis||'').replace('Non-Consolidated','Standalone'))+'</td><td>'+H(r.audited)+'</td><td>'+(r.xbrl?'<a href="'+H(r.xbrl)+'" target="_blank" rel="noopener noreferrer">XBRL</a>':'')+'</td></tr>').join('');
+  const ca=(f.actions||[]).slice(0,10).map(a=>'<tr><td>'+H(a.ex)+'</td><td class="w">'+H(a.subject)+'</td></tr>').join('');
+  const sh=(f.shareholding||[]).slice(0,8).map(x=>'<tr><td>'+H(x.date)+'</td><td>'+H(x.promoter)+'%</td><td>'+H(x.public)+'%</td></tr>').join('');
+  return'<div class="g3">'+box('Financials',fin+(res?'<table style="margin-top:4px"><tr><th>Quarter to</th><th>Basis</th><th>Audit</th><th></th></tr>'+res+'</table>':''))
+    +box('Corporate actions',ca?'<table><tr><th>Ex-date</th><th style="text-align:left">Action</th></tr>'+ca+'</table>':'<div class="empty">None listed.</div>')
+    +box('Shareholding',sh?'<table><tr><th>Quarter</th><th>Promoter</th><th>Public</th></tr>'+sh+'</table>':'<div class="empty">None listed.</div>')+'</div>'
+    +'<p class="note">Source: NSE filings, fetched '+H((f.asof||'').slice(0,10))+(f.errors&&f.errors.length?' · <span class="dn">'+H(f.errors.join('; '))+'</span>':'')+'</p>';
 }
 function curve(){
   const v=S.curve,n=v.length;if(n<2)return'<div class="empty">Collecting data. The curve starts after a few seconds.</div>';
@@ -576,6 +603,7 @@ async function loadReports(){
   if(j.data_is_synthetic)h+='<p class="note dn">Input data is synthetic. These numbers test the engine; they say nothing about real markets.</p>';
   h+='<div class="colh" style="padding:6px 0 2px">Full period, both strategies</div><table>'+tr('Return',pc(f.ret),cls(f.ret))+tr('Max drawdown',(f.max_dd*100).toFixed(2)+'%')+tr('Sharpe (daily)',f.sharpe.toFixed(2))+tr('Trades / wins',f.trades+' / '+f.wins)+tr('Stop-outs',f.stops)+tr('Risk vetoes',f.risk_rejects)+tr('Daily halts / lockouts',f.halts+' / '+f.locks)+tr('Fees (placeholder model)',inr(f.fees))+tr('Integrity errors',f.oversell+f.osm_errors)+'</table>';
   h+='<div class="colh" style="padding:6px 0 2px">Per instrument</div><table><tr><th>Symbol</th><th>Return</th><th>Max DD</th><th>Trades</th></tr>'+j.per_instrument.map(x=>'<tr><td>'+x.sym+'</td><td class="'+cls(x.ret)+'">'+pc(x.ret)+'</td><td>'+(x.max_dd*100).toFixed(2)+'%</td><td>'+x.trades+'</td></tr>').join('')+'</table>';
+  if(j.candidates)h+='<div class="colh" style="padding:6px 0 2px">Strategy validation · '+H(j.criteria||'')+'</div><table><tr><th>Family</th><th>OOS return</th><th>OOS at 2× cost</th><th>Worst DD</th><th>Positive periods</th><th>Verdict</th></tr>'+j.candidates.map(c=>'<tr><td>'+H(c.family)+'</td><td class="'+cls(c.oos_ret)+'">'+pc(c.oos_ret)+'</td><td class="'+cls(c.oos_ret_2x)+'">'+pc(c.oos_ret_2x)+'</td><td>'+(c.worst_dd_2x*100).toFixed(2)+'%</td><td>'+c.pos_folds+' / '+c.folds+'</td><td><span class="pill '+(c.pass?'ok':'bad')+'">'+(c.pass?'PASS':'FAIL')+'</span>'+(c.filter_active?'':' <span class="mute">filter inactive</span>')+'</td></tr>').join('')+'</table>';
   h+='<div class="colh" style="padding:6px 0 2px">Walk-forward, out-of-sample</div><table><tr><th>Strategy</th><th>OOS return</th><th>Worst fold DD</th><th>Folds</th></tr>'+j.walk_forward.map(x=>'<tr><td>'+x.name+'</td><td class="'+cls(x.oos_ret)+'">'+pc(x.oos_ret)+'</td><td>'+(x.worst_dd*100).toFixed(2)+'%</td><td>'+x.folds.length+'</td></tr>').join('')+'</table>';
   h+='<div class="colh" style="padding:6px 0 2px">Cost sensitivity</div><table><tr><th>Fee</th><th>Slippage</th><th>Return</th></tr>'+j.sensitivity.map(x=>'<tr><td>x'+x.fee_mult+'</td><td>x'+x.slip_mult+'</td><td class="'+cls(x.ret)+'">'+pc(x.ret)+'</td></tr>').join('')+'</table>';
   if(l)h+='<div class="colh" style="padding:6px 0 2px">Matching-engine latency, ns</div><table><tr><th>Operation</th><th>p50</th><th>p99</th><th>p99.9</th><th>max</th></tr>'+l.ops.map(x=>'<tr><td>'+x.op+'</td><td>'+x.p50+'</td><td>'+x.p99+'</td><td>'+x.p999+'</td><td>'+x.max+'</td></tr>').join('')+'</table><p class="note">Measured on: '+l.machine+'. '+l.note+'</p>';
@@ -585,6 +613,25 @@ loadReports();
 log('SYSTEM','Preview started in SIMULATION mode with '+inr(START)+' demo funds');
 for(let k=0;k<4;k++)pushNews();
 loadNews();setInterval(loadNews,30000);
+/* live business TV: official YouTube live streams of channels verified by tools/check_channels.py */
+let TV=[];
+function playTv(id){
+  const c=TV.find(x=>x.id===id);if(!c)return;
+  $('#chanOpen').href='https://www.youtube.com/channel/'+encodeURIComponent(c.id)+'/live';
+  const tv=$('#tv');tv.classList.add('on');
+  tv.innerHTML='<iframe title="'+H(c.name)+' live" src="https://www.youtube.com/embed/live_stream?channel='+encodeURIComponent(c.id)+'&autoplay=1&mute=1" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>';
+  try{localStorage.setItem('mc_tv',id)}catch(e){}
+}
+async function loadTv(){
+  try{const r=await fetch('data/channels.json',{cache:'no-store'});if(!r.ok)return;const j=await r.json();TV=j.channels||[];if(!TV.length)return;
+    $('#chan').innerHTML=TV.map(c=>'<option value="'+H(c.id)+'">'+(c.live?'● ':'○ ')+H(c.name)+' · '+H(c.region)+(c.lang!=='English'?' · '+H(c.lang):'')+(c.live?'':' (not live when checked)')+'</option>').join('');
+    let pick='';try{pick=localStorage.getItem('mc_tv')||''}catch(e){}
+    if(!TV.some(c=>c.id===pick))pick=(TV.find(c=>c.live)||TV[0]).id;
+    $('#chan').value=pick;$('#chan').title='Checked '+j.checked+'. ● = live when checked. If a channel does not allow playback inside other sites, YouTube shows a message here: use Open on YouTube.';
+    playTv(pick)}catch(e){}
+}
+$('#chan').addEventListener('change',e=>playTv(e.target.value));
+loadTv();
 render();timer=setInterval(tick,1000);initApi();
 </script>
 </body>

@@ -51,6 +51,10 @@ jobs:
         run: python3 tools/build_connector.py
       - name: Adverse-media feed (NSE filings must work; GDELT may be refused from shared runners)
         run: python3 tools/fetch_news.py && python3 -c "import json;j=json.load(open('web/data/news.json'));print(j['status']);print(len(j['items']),'items');[print(' ',x['tag'],x['topic'],x['title'][:100]) for x in j['items'][:8]]"
+      - name: TV channels (names read from YouTube; live status)
+        run: python3 tools/check_channels.py
+      - name: Fundamentals sample (NSE corporate actions, shareholding, results, XBRL figures)
+        run: python3 tools/fetch_fundamentals.py --symbols RELIANCE,HDFCBANK,TCS && python3 -c "import json;r=json.load(open('web/data/fund/RELIANCE.json'));print(json.dumps(r.get('figures'),indent=1)[:1500]);print(r.get('shareholding',[])[:2]);print(r.get('actions',[])[:3])"
       - name: Server uses the real closes
         run: |
           ./build/mc_server --web web --port 8098 & sleep 2

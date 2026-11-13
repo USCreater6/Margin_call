@@ -23,6 +23,11 @@ fi
 if [ ! -f web/data/connector.json ] || [ ! -d web/data/links ] || [ "$(date -r web/data/connector.json +%F)" != "$(date +%F)" ]; then
   nohup python3 tools/build_connector.py > logs/connector.log 2>&1 &
 fi
+python3 tools/check_channels.py > logs/channels.log 2>&1 || echo "TV channel check failed (see logs/channels.log)"
+if [ ! -d web/data/fund ] || [ -z "$(find web/data/fund -name '*.json' -mtime -1 2>/dev/null | head -1)" ]; then
+  pkill -f "tools/fetch_fundamentals.py" 2>/dev/null || true
+  nohup python3 tools/fetch_fundamentals.py > logs/fundamentals.log 2>&1 &
+fi
 pkill -f "tools/fetch_news.py" 2>/dev/null || true
 nohup python3 tools/fetch_news.py --loop 120 > logs/news.log 2>&1 &
 echo "Background jobs: price history -> logs/history.log, connector -> logs/connector.log, news (every 2 min) -> logs/news.log ($today)"
