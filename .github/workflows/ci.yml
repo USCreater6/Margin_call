@@ -1,0 +1,26 @@
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build-test-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, test, simulate
+        run: bash scripts/build_and_report.sh
+      - name: Upload SIMULATION report
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulation-report
+          path: web/reports/
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests under address and undefined-behaviour sanitizers
+        run: |
+          cmake -S . -B build-san -DMC_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-san -j"$(nproc)" --target mc_tests
+          ./build-san/mc_tests

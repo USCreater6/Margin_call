@@ -1,0 +1,9 @@
+{
+  "name": "Margin_call (simulation)",
+  "image": "mcr.microsoft.com/devcontainers/cpp:1-ubuntu-24.04",
+  "features": { "ghcr.io/devcontainers/features/python:1": { "installTools": false } },
+  "postCreateCommand": "bash scripts/build_and_report.sh",
+  "postAttachCommand": "bash scripts/serve.sh",
+  "forwardPorts": [8080],
+  "portsAttributes": { "8080": { "label": "Margin_call terminal", "onAutoForward": "openBrowser" } }
+}
