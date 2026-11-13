@@ -18,13 +18,18 @@ There is no broker connection, no live market data and no real order path.
 | Latency benchmark for the matching engine | `apps/bench.cpp` | built |
 | Live simulation session: terminal orders go through the same risk engine and matching engine | `include/mc/session.hpp` | built, tested |
 | Terminal server (static files + JSON API, localhost only by default) | `apps/server.cpp` | built, smoke-tested in CI |
-| NSE daily-data fetcher with split/bonus back-adjustment | `tools/fetch_nse.py` | built, run on GitHub |
+| NSE daily-data fetcher; splits and bonuses from `tools/corporate_actions.csv` | `tools/fetch_nse.py` | built, run on GitHub |
+| Starting prices and one-year history for all NSE equities | `tools/fetch_latest.py` | built, run in CI |
+| Connector data: NSE/BSE listings, Wikidata, GLEIF, annual-report file | `tools/build_connector.py` | built, run in CI |
 | Web terminal | `web/index.html` | built, see limits below |
 
 ## What is not built yet
 
 - **Real data inside the repo.** NSE daily files are downloaded on demand (`scripts/fetch_data.sh` or the *real-data-backtest* workflow) and are not committed, because redistribution terms are not verified. Without them the report uses SYNTHETIC data.
-- **Real ticks.** The terminal's prices are synthetic ticks. With NSE files present they start from the last real close.
+- **Real ticks.** Starting prices are the last trading day's official NSE closes (fetched when the terminal starts). Ticks after that are synthetic.
+- **MCX.** MCX's site returns HTTP 403 to automated downloads, so there are no commodity futures. GOLDBEES (NSE gold ETF) is in the watchlist instead.
+- **Connector coverage.** Search covers every NSE and BSE code. Links are ownership only (Wikidata, GLEIF, and the annual-report file `tools/connector_annual_reports.csv`, which is empty so far). No supplier or customer data.
+- **Short selling and leverage.** The terminal is long-only and cash-limited (open orders count), per the no-leverage default in the plan.
 - **Dividend adjustment and MCX data.** Prices are adjusted for splits and bonuses only. No commodity data yet.
 - **Strategies in the terminal.** Momentum and mean reversion run in the backtest only. In the terminal, orders come from the ticket or the random stub.
 - **News, video and connector data.** Sample content only.

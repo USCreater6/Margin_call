@@ -156,7 +156,7 @@ static void test_risk() {
     CHECK(r.check(mk(Side::Buy, 1), c, 0) == Reject::Halted);
     RiskCtx d = c; d.pos_qty = 10;
     CHECK(r.check(mk(Side::Sell, 10), d, 0) == Reject::None);              // reducing is still allowed
-    CHECK(r.check(mk(Side::Sell, 11), d, 0) == Reject::Halted);            // but not flipping short
+    CHECK(r.check(mk(Side::Sell, 11), d, 0) == Reject::NoShort);           // flipping short is never allowed (long-only)
     r.start_day(97000); CHECK(!r.halted());
   }
   { RiskEngine r(L); r.start_day(100000);   // profit lockout
@@ -431,8 +431,10 @@ static void test_session_risk_controls() {
     s.set_price(0, 80000); s.step(sec, false);                                     // -20% gap on a 24% position
     CHECK(s.position(0).qty == 0 && s.halted());
     CHECK(!s.submit(1, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 2 * sec).empty());
-    s.rearm();
-    CHECK(!s.halted() && s.submit(1, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 3 * sec).empty());
+    s.rearm();                                                                     // re-arm does NOT clear the daily halt
+    CHECK(s.halted() && !s.submit(1, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 3 * sec).empty());
+    s.set_wall(1763000000000LL); s.set_wall(1763000000000LL + 86400000LL);         // next IST day
+    CHECK(!s.halted() && s.submit(1, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 4 * sec).empty());
   }
   { LiveSim s = make_sim();                                                         // kill switch and flatten
     s.submit(0, Side::Buy, OrdType::Market, 2, 0, "MANUAL", 0);
@@ -449,6 +451,31 @@ static void test_session_risk_controls() {
     s.reset(); NEAR(s.equity(), 100000.0); CHECK(s.orders().empty());
   }
 }
+// Regression: SELL while flat opened a short (screenshot 13 Nov). Long-only must hold for every path.
+static void test_session_long_only_and_cash() {
+  const Ts sec = 1000000000LL;
+  LiveSim s = make_sim();
+  CHECK(!s.submit(0, Side::Sell, OrdType::Market, 2, 0, "MANUAL", 0).empty());       // sell while flat
+  CHECK(s.orders().back().code == "NO_SHORT" && s.position(0).qty == 0);
+  CHECK(!s.submit(0, Side::Sell, OrdType::Limit, 2, 110000, "MANUAL", 0).empty());   // resting sell while flat
+  CHECK(s.submit(0, Side::Buy, OrdType::Market, 3, 0, "MANUAL", 0).empty());
+  CHECK(s.submit(0, Side::Sell, OrdType::Limit, 2, 110000, "MANUAL", sec).empty());  // 2 of 3 resting
+  CHECK(!s.submit(0, Side::Sell, OrdType::Limit, 2, 110000, "MANUAL", sec).empty()); // 2 more would exceed 3
+  CHECK(s.orders().back().code == "NO_SHORT");
+  CHECK(s.submit(0, Side::Sell, OrdType::Market, 1, 0, "MANUAL", sec).empty());      // the remaining 1 is fine
+  CHECK(s.position(0).qty == 2);
+  // open buy orders count against cash: 4 resting buys of ~24,900 each fit; the 5th would not (no leverage)
+  LiveSim c = make_sim();
+  int okc = 0;
+  for (int i = 0; i < 5; ++i) okc += c.submit(0, Side::Buy, OrdType::Limit, 24, 99000 - 100 * i, "MANUAL", 2 * sec + i).empty();
+  CHECK(okc == 4);
+  CHECK(c.orders().back().code == "GROSS_EXPOSURE" || c.orders().back().code == "INSUFFICIENT_CASH");
+  // average fill price across levels
+  LiveSim f = make_sim();
+  CHECK(f.submit(0, Side::Buy, OrdType::Market, 20, 0, "MANUAL", 0).empty());
+  const auto& r = f.orders().back();
+  CHECK(r.o.filled == 20 && r.avg_fill() >= 1000.10 && std::fabs(r.avg_fill() - f.position(0).avg) < 1e-9);
+}
 static void test_session_soak() {   // long random run: accounting must stay consistent
   LiveSim s = make_sim();
   s.set_stub(true);
@@ -457,6 +484,8 @@ static void test_session_soak() {   // long random run: accounting must stay con
   int bad = 0;
   for (const auto& r : s.orders()) { bad += r.o.filled > r.o.qty; (void)fees; }
   CHECK(bad == 0);
+  CHECK(s.position(0).qty >= 0 && s.position(1).qty >= 0);    // long-only
+  CHECK(s.cash() >= -1e-6);                                    // no leverage
   CHECK(std::isfinite(s.equity()) && s.equity() > 0);
   const std::string j = s.state_json(0, 5001LL * 1000000000LL);
   CHECK(j.front() == '{' && j.back() == '}' && j.find("\"engine\":\"cpp\"") != std::string::npos);
@@ -474,6 +503,7 @@ int main() {
       {"latency recorder", test_latency}, {"session: orders through risk and matching", test_session_orders},
       {"session: resting order filled at its limit", test_session_resting_fill_and_priority},
       {"session: rate cap, stop, halt, kill, funding", test_session_risk_controls}, {"session: 5000-tick soak", test_session_soak},
+      {"session: long-only, open orders, cash, average fill", test_session_long_only_and_cash},
   };
   int failed_tests = 0;
   for (const T& t : tests) {

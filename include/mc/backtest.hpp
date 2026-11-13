@@ -124,6 +124,7 @@ inline BtResult run_backtest(const std::vector<Instrument>& insts, std::vector<S
     RiskCtx c;
     c.equity = equity_now; c.gross = pf.gross(marks); c.open_orders = ex.live(); c.positions = pf.open_positions();
     c.pos_qty = pf.pos(o.strat, o.inst).qty; c.ref_px = ref_px; c.strat_halted = strat_halted[o.strat] != 0;
+    c.cash = pf.cash();
     const Reject rj = risk.check(o, c, now);
     if (rj != Reject::None) {
       ++R.risk_rejects; ++R.rejects[static_cast<std::size_t>(rj)];

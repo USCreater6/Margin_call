@@ -2,3 +2,6 @@ build/
 build-san/
 data/
 web/reports/
+web/data/
+logs/
+.cache/

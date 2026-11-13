@@ -1,0 +1,4 @@
+# Company relationships taken from annual reports (subsidiary, associate, joint-venture lists).
+# One row per link. company_isin = the listed company whose annual report lists the link.
+# related_isin is blank for unlisted entities. Every row needs a source (report year and page).
+company_isin,related_name,related_isin,relation,source

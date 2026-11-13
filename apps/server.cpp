@@ -10,6 +10,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -67,28 +68,64 @@ void respond(int fd, int code, const char* type, const std::string& body) {
     << "\r\nContent-Length: " << body.size() << "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
   send_all(fd, h.str() + body);
 }
-std::string ok(const std::string& why = "") {
+std::string ok(const std::string& why = "", const std::string& code = "") {
   std::string w;
   for (char c : why) { if (c == '"' || c == '\\') w += '\\'; w += c; }
-  return std::string("{\"ok\":") + (why.empty() ? "true" : "false") + ",\"why\":\"" + w + "\"}";
+  return std::string("{\"ok\":") + (why.empty() ? "true" : "false") + ",\"why\":\"" + w + "\",\"code\":\"" + code + "\"}";
+}
+// Decodes %XX escapes and '+' in a URL path. Returns false on a malformed escape or an encoded NUL.
+bool url_decode(const std::string& in, std::string& out) {
+  out.clear();
+  for (std::size_t i = 0; i < in.size(); ++i) {
+    if (in[i] == '%') {
+      if (i + 2 >= in.size() || !std::isxdigit(static_cast<unsigned char>(in[i + 1])) || !std::isxdigit(static_cast<unsigned char>(in[i + 2]))) return false;
+      const char c = static_cast<char>(std::stoi(in.substr(i + 1, 2), nullptr, 16));
+      if (c == '\0') return false;
+      out += c; i += 2;
+    } else out += in[i];
+  }
+  return true;
+}
+std::string lower(std::string s) { for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; }
+// Instruments file written by tools/fetch_latest.py:
+// symbol,venue,price,tick,lot,source   (price and tick in rupees). Lines starting with # are comments.
+int load_instruments(LiveSim& sim, const std::string& path) {
+  std::ifstream f(path);
+  std::string line;
+  int n = 0;
+  while (std::getline(f, line)) {
+    if (line.empty() || line[0] == '#' || line.rfind("symbol,", 0) == 0) continue;
+    std::stringstream ss(line);
+    std::string c[6];
+    for (int k = 0; k < 6 && std::getline(ss, c[k], ','); ++k) {}
+    const double px = std::atof(c[2].c_str()), tick = std::atof(c[3].c_str());
+    const long long lot = std::atoll(c[4].c_str());
+    if (c[0].empty() || !(px > 0) || !(tick > 0)) { std::fprintf(stderr, "instruments: skipped bad row: %s\n", line.c_str()); continue; }
+    const Price t = static_cast<Price>(std::llround(tick * 100.0));
+    const Price p = std::max<Price>(t, static_cast<Price>(std::llround(px * 100.0 / static_cast<double>(t))) * t);
+    sim.add_instrument(c[0], c[1], p, t, c[5], lot > 0 ? lot : 1);
+    ++n;
+  }
+  return n;
 }
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string web = "web", data, bind_addr = "127.0.0.1";
+  std::string web = "web", data, bind_addr = "127.0.0.1", instruments = "data/latest/instruments.csv";
   int port = 8080;
   for (int i = 1; i + 1 < argc; i += 2) {
     if (!std::strcmp(argv[i], "--web")) web = argv[i + 1];
     else if (!std::strcmp(argv[i], "--port")) port = std::atoi(argv[i + 1]);
     else if (!std::strcmp(argv[i], "--data")) data = argv[i + 1];
     else if (!std::strcmp(argv[i], "--bind")) bind_addr = argv[i + 1];
+    else if (!std::strcmp(argv[i], "--instruments")) instruments = argv[i + 1];
   }
   std::signal(SIGPIPE, SIG_IGN);
 
   LiveSim sim(100000.0, RiskLimits{}, static_cast<std::uint64_t>(wall_ms()));
   sim.set_wall(wall_ms());
-  int loaded = 0;
-  if (!data.empty() && std::filesystem::exists(data)) {
+  int loaded = load_instruments(sim, instruments);
+  if (!loaded && !data.empty() && std::filesystem::exists(data)) {
     std::vector<std::string> files;
     for (const auto& e : std::filesystem::directory_iterator(data))
       if (e.path().extension() == ".csv" && e.path().filename().string()[0] != '_') files.push_back(e.path().string());
@@ -97,11 +134,12 @@ int main(int argc, char** argv) {
       const LoadResult r = load_bars(f);
       if (!r.ok) continue;
       const Price c = std::max<Price>(5, (r.bars.back().c / 5) * 5);
-      sim.add_instrument(std::filesystem::path(f).stem().string(), r.synthetic ? "SYNTH" : "NSE", c, 5);
+      sim.add_instrument(std::filesystem::path(f).stem().string(), r.synthetic ? "SYNTH" : "NSE", c, 5,
+                         r.synthetic ? "synthetic data" : "last close in " + data);
       ++loaded;
     }
   }
-  if (!loaded) {   // placeholder instruments with placeholder prices
+  if (!loaded) {   // no data at all: placeholder instruments with placeholder prices, clearly labelled
     sim.add_instrument("NIFTY-FUT", "NSE F&O", 2500000, 50);
     sim.add_instrument("RELIANCE", "NSE", 140000, 10);
     sim.add_instrument("HDFCBANK", "NSE", 100000, 10);
@@ -118,7 +156,7 @@ int main(int argc, char** argv) {
   if (::inet_pton(AF_INET, bind_addr.c_str(), &a.sin_addr) != 1) { std::fprintf(stderr, "bad bind address\n"); return 2; }
   if (::bind(ls, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || ::listen(ls, 16) != 0) { std::perror("bind/listen"); return 2; }
   std::printf("Margin_call terminal (SIMULATION) on http://%s:%d  instruments: %zu (%s)\n", bind_addr.c_str(), port, sim.instruments(),
-              loaded ? "last close from data files; ticks are synthetic" : "placeholder prices; ticks are synthetic");
+              loaded ? "starting prices from data files; ticks are synthetic" : "PLACEHOLDER prices; ticks are synthetic");
   std::fflush(stdout);
 
   Ts next_tick = mono_ns() + 1000000000LL;
@@ -142,8 +180,8 @@ int main(int argc, char** argv) {
       if (hdr_end == std::string::npos) {
         hdr_end = req.find("\r\n\r\n");
         if (hdr_end != std::string::npos) {
-          std::size_t cl = req.find("Content-Length:");
-          if (cl == std::string::npos) cl = req.find("content-length:");
+          const std::string head = lower(req.substr(0, hdr_end));
+          const std::size_t cl = head.find("content-length:");
           need = (cl != std::string::npos && cl < hdr_end) ? static_cast<std::size_t>(std::atol(req.c_str() + cl + 15)) : 0;
         }
       }
@@ -172,8 +210,11 @@ int main(int argc, char** argv) {
         if (i < 0) out = ok("Unknown instrument");
         else if ((side != "BUY" && side != "SELL") || (type != "MARKET" && type != "LIMIT")) out = ok("Side must be BUY or SELL; type MARKET or LIMIT");
         else if (!(qty >= 1) || qty > 1e9 || qty != std::floor(qty)) out = ok("Quantity must be a whole number of 1 or more");
-        else out = ok(sim.submit(static_cast<std::size_t>(i), side == "BUY" ? Side::Buy : Side::Sell, type == "MARKET" ? OrdType::Market : OrdType::Limit,
-                                 static_cast<Qty>(qty), static_cast<Price>(std::llround(px * 100.0)), "MANUAL", now));
+        else {
+          const std::string why = sim.submit(static_cast<std::size_t>(i), side == "BUY" ? Side::Buy : Side::Sell, type == "MARKET" ? OrdType::Market : OrdType::Limit,
+                                             static_cast<Qty>(qty), static_cast<Price>(std::llround(px * 100.0)), "MANUAL", now);
+          out = ok(why, why.empty() ? "" : sim.orders().back().code);
+        }
       } else if (path == "/api/cancel") {
         const std::string id = jget(body, "id");
         const std::size_t d = id.find_first_of("0123456789");
@@ -187,8 +228,8 @@ int main(int argc, char** argv) {
       else if (path == "/api/stub") sim.set_stub(jget(body, "on") == "true");
       else { respond(fd, 404, "application/json", ok("Unknown endpoint")); ::close(fd); continue; }
       respond(fd, 200, "application/json", out);
-    } else if (method == "GET" && path.find("..") == std::string::npos) {
-      const std::string file = web + (path == "/" ? "/index.html" : path);
+    } else if (std::string dp; method == "GET" && url_decode(path, dp) && dp.find("..") == std::string::npos && dp.find('\\') == std::string::npos) {
+      const std::string file = web + (dp == "/" ? "/index.html" : dp);
       std::ifstream f(file, std::ios::binary);
       if (f && std::filesystem::is_regular_file(file)) {
         std::ostringstream ss; ss << f.rdbuf();

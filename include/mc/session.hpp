@@ -16,7 +16,8 @@ namespace mc {
 
 class LiveSim {
  public:
-  struct Rec { Order o; std::string src, why; Price fill_px = 0; std::int64_t wall = 0; };
+  struct Rec { Order o; std::string src, why, code; double fill_val = 0; std::int64_t wall = 0;
+    double avg_fill() const { return o.filled > 0 ? fill_val / static_cast<double>(o.filled) : 0.0; } };
   struct Evt { std::int64_t wall; std::string k, m; };
   struct Led { std::int64_t wall; std::string k; double a, b; };
 
@@ -26,8 +27,11 @@ class LiveSim {
     ledger_.push_back({0, "OPENING DEMO BALANCE", capital, capital});
   }
 
-  void add_instrument(const std::string& sym, const std::string& venue, Price px, Price tick) {
-    inst_.push_back(Inst{sym, venue, px, px, tick, OrderBook(256)});
+  // `ref` is the reference price that day-change is measured against (e.g. the last real close);
+  // `source` says where the starting price came from and is shown in the terminal.
+  void add_instrument(const std::string& sym, const std::string& venue, Price px, Price tick,
+                      const std::string& source = "placeholder", Qty lot = 1) {
+    inst_.push_back(Inst{sym, venue, px, px, tick, OrderBook(256), source, lot});
     marks_.push_back(px);
     quote(inst_.size() - 1);
   }
@@ -36,7 +40,18 @@ class LiveSim {
     for (std::size_t i = 0; i < inst_.size(); ++i) if (inst_[i].sym == s) return static_cast<int>(i);
     return -1;
   }
-  void set_wall(std::int64_t ms) { wall_ = ms; if (ledger_.size() == 1 && ledger_[0].wall == 0) ledger_[0].wall = ms; }
+  // Wall clock in ms. When the India (IST) calendar day changes, a new risk day starts:
+  // the daily loss halt and profit lockout are cleared only here, never by re-arming.
+  void set_wall(std::int64_t ms) {
+    wall_ = ms;
+    if (ledger_.size() == 1 && ledger_[0].wall == 0) ledger_[0].wall = ms;
+    const std::int64_t day = (ms + 19800000LL) / 86400000LL;   // IST = UTC+05:30
+    if (day_ != 0 && day != day_) {
+      risk_.start_day(equity());
+      log("NEW DAY", "New trading day: daily loss and profit limits measured from current equity");
+    }
+    day_ = day;
+  }
   void set_price(std::size_t i, Price px) { inst_[i].px = px; marks_[i] = px; }   // test hook
 
   double equity() const { return pf_.equity(marks_); }
@@ -65,13 +80,26 @@ class LiveSim {
     if (!force) {
       if (type == OrdType::Stop) why = "Stop orders are not available in the terminal yet";
       else if (type == OrdType::Limit && (px <= 0 || px % in.tick != 0)) why = "Limit price must be a positive multiple of the tick size";
-      else if (self_cross(i, side, type, px)) why = "Self-trade prevention: it would match your own resting order";
+      else if (self_cross(i, side, type, px)) { why = "Self-trade prevention: it would match your own resting order"; r.code = "SELF_TRADE"; }
       else {
         RiskCtx c;
         c.equity = equity(); c.gross = pf_.gross(marks_); c.open_orders = live_; c.positions = pf_.open_positions();
-        c.pos_qty = position(i).qty; c.ref_px = rupees(type == OrdType::Limit ? px : in.px);
-        why = human(risk_.check(r.o, c, now));
+        c.pos_qty = position(i).qty;
+        // a market buy is checked at the best ask it will actually pay, not the last price
+        c.ref_px = rupees(type == OrdType::Limit ? px : (side == Side::Buy && in.book.best_ask() > 0 ? in.book.best_ask() : in.px));
+        c.cash = pf_.cash();
+        c.long_only = true;
+        for (const Rec& q : orders_) {
+          if (!is_live(q.o.st)) continue;
+          const Qty rem = q.o.qty - q.o.filled;
+          if (q.o.side == Side::Sell && q.o.inst == i) c.pending_sell_qty += rem;
+          if (q.o.side == Side::Buy) c.pending_buy_notional += rupees(q.o.px) * static_cast<double>(rem) * (1.0 + fee_bps_ / 1e4);
+        }
+        const Reject rj = risk_.check(r.o, c, now);
+        why = human(rj);
+        if (rj != Reject::None) r.code = to_string(rj);
       }
+      if (r.code.empty() && !why.empty()) r.code = "BAD_ORDER";
     }
     if (!why.empty()) {
       adv(r.o, Ev::RiskReject); r.why = why;
@@ -121,9 +149,13 @@ class LiveSim {
     risk_.kill(); stub_ = false;
     log("KILL SWITCH", also_flatten ? "Activated with flatten" : "Activated");
   }
+  // Re-arming clears the kill switch only. A daily loss halt or profit lockout stays until the next day.
   void rearm() {
-    risk_.rearm(); risk_.start_day(equity());
-    log("RE-ARM", "System re-armed. Daily limits are now measured from current equity.");
+    risk_.rearm();
+    std::string m = "Kill switch cleared.";
+    if (risk_.halted()) m += " Daily loss halt still active until the next trading day.";
+    if (risk_.locked()) m += " Profit lockout still active until the next trading day.";
+    log("RE-ARM", m);
   }
   bool fund(double amount) {
     if (!(amount > 0) || amount > 1e12) return false;
@@ -137,6 +169,7 @@ class LiveSim {
     orders_.clear(); events_.clear(); ledger_.clear(); curve_.clear(); stamps_.clear();
     pf_ = Portfolio(capital_, 1); risk_ = RiskEngine(lim_); risk_.start_day(capital_);
     dep_ = fees_ = turn_ = 0; live_ = 0; stub_ = false;
+    for (auto& in : inst_) { in.px = in.open; marks_[static_cast<std::size_t>(&in - &inst_[0])] = in.open; }
     ledger_.push_back({wall_, "OPENING DEMO BALANCE", capital_, capital_});
     for (std::size_t i = 0; i < inst_.size(); ++i) quote(i);
     log("RESET", "Demo account reset");
@@ -172,7 +205,8 @@ class LiveSim {
     if (!was_l && risk_.locked()) log("LOCKOUT", "Daily profit target reached. New risk blocked.");
     if (stub_ && ticks_ % 4 == 0 && !inst_.empty()) {
       const std::size_t i = rng_.next() % inst_.size();
-      const Side s = (rng_.next() & 1) ? Side::Buy : Side::Sell;
+      // long-only: the stub sells only what is held
+      const Side s = (position(i).qty > 0 && (rng_.next() & 1)) ? Side::Sell : Side::Buy;
       log("AI STUB", std::string("Random stub signal: ") + to_string(s) + " 1 " + inst_[i].sym);
       submit(i, s, OrdType::Market, 1, 0, "AI-STUB", now);
     }
@@ -192,7 +226,8 @@ class LiveSim {
       << ",\"stub\":" << (stub_ ? "true" : "false") << ",\"rate\":" << stamps_.size() << ",\"sel\":" << sel << ",\"inst\":[";
     for (std::size_t i = 0; i < inst_.size(); ++i)
       o << (i ? "," : "") << "{\"s\":\"" << esc(inst_[i].sym) << "\",\"v\":\"" << esc(inst_[i].venue) << "\",\"p\":" << rupees(inst_[i].px)
-        << ",\"o\":" << rupees(inst_[i].open) << ",\"t\":" << rupees(inst_[i].tick) << "}";
+        << ",\"o\":" << rupees(inst_[i].open) << ",\"t\":" << rupees(inst_[i].tick) << ",\"lot\":" << inst_[i].lot
+        << ",\"src\":\"" << esc(inst_[i].source) << "\"}";
     o << "],\"book\":{\"asks\":[";
     if (!inst_.empty()) {
       bool f = true;
@@ -215,7 +250,7 @@ class LiveSim {
       const Rec& r = orders_[k];
       o << (k + 1 == orders_.size() ? "" : ",") << "{\"id\":\"" << tag(r.o.id) << "\",\"w\":" << r.wall << ",\"src\":\"" << esc(r.src)
         << "\",\"side\":\"" << to_string(r.o.side) << "\",\"q\":" << r.o.qty << ",\"f\":" << r.o.filled << ",\"s\":\"" << esc(inst_[r.o.inst].sym)
-        << "\",\"type\":\"" << to_string(r.o.type) << "\",\"px\":" << rupees(r.o.px) << ",\"fp\":" << rupees(r.fill_px)
+        << "\",\"type\":\"" << to_string(r.o.type) << "\",\"px\":" << rupees(r.o.px) << ",\"fp\":" << r.avg_fill() << ",\"code\":\"" << esc(r.code) << "\""
         << ",\"st\":\"" << to_string(r.o.st) << "\",\"why\":\"" << esc(r.why) << "\"}";
     }
     o << "],\"audit\":[";
@@ -232,7 +267,7 @@ class LiveSim {
   }
 
  private:
-  struct Inst { std::string sym, venue; Price px, open, tick; OrderBook book; };
+  struct Inst { std::string sym, venue; Price px, open, tick; OrderBook book; std::string source; Qty lot; };
   static constexpr OrderId kMaker = 1ULL << 62;
 
   static std::string tag(OrderId id) { std::string s = std::to_string(id); return "SIM-" + std::string(s.size() < 4 ? 4 - s.size() : 0, '0') + s; }
@@ -266,6 +301,8 @@ class LiveSim {
       case Reject::OpenOrders: return "Maximum open orders reached (" + std::to_string(lim_.max_open_orders) + ")";
       case Reject::Positions: return "Maximum open positions reached (" + std::to_string(lim_.max_positions) + ")";
       case Reject::Gross: return "Gross exposure would exceed " + pc(lim_.max_gross) + " of equity";
+      case Reject::NoShort: return "Long-only: you can sell only what you hold, after open sell orders";
+      case Reject::Cash: return "Not enough cash: order value plus open buy orders exceeds available cash";
       case Reject::COUNT: break;
     }
     return "Rejected";
@@ -301,7 +338,7 @@ class LiveSim {
   }
   void apply_fill(OrderId id, Price px, Qty q) {
     Rec& r = orders_[id - 1];
-    r.o.filled += q; r.fill_px = px;
+    r.o.filled += q; r.fill_val += rupees(px) * static_cast<double>(q);
     adv(r.o, r.o.filled == r.o.qty ? Ev::FullFill : Ev::PartialFill);
     if (r.o.st == State::Filled) --live_;
     const double notional = rupees(px) * static_cast<double>(q), fee = notional * fee_bps_ / 1e4;
@@ -327,7 +364,7 @@ class LiveSim {
   double dep_ = 0, fees_ = 0, turn_ = 0;
   int live_ = 0;
   long ticks_ = 0;
-  std::int64_t wall_ = 0;
+  std::int64_t wall_ = 0, day_ = 0;
   bool stub_ = false;
 };
 

@@ -1,6 +1,7 @@
 // Central risk engine. Every order from every strategy passes check() before it reaches a venue.
 #pragma once
 #include <algorithm>
+#include <limits>
 #include "mc/types.hpp"
 
 namespace mc {
@@ -19,7 +20,7 @@ struct RiskLimits {
 
 enum class Reject : std::uint8_t {
   None, BadOrder, Killed, RateLimit, Halted, ProfitLock, StratHalted,
-  Notional, OpenOrders, Positions, Gross, COUNT
+  Notional, OpenOrders, Positions, Gross, NoShort, Cash, COUNT
 };
 inline const char* to_string(Reject r) {
   switch (r) {
@@ -28,7 +29,8 @@ inline const char* to_string(Reject r) {
     case Reject::Halted: return "DAILY_LOSS_HALT"; case Reject::ProfitLock: return "PROFIT_LOCKOUT";
     case Reject::StratHalted: return "STRATEGY_HALT"; case Reject::Notional: return "ORDER_NOTIONAL";
     case Reject::OpenOrders: return "MAX_OPEN_ORDERS"; case Reject::Positions: return "MAX_POSITIONS";
-    case Reject::Gross: return "GROSS_EXPOSURE"; case Reject::COUNT: break;
+    case Reject::Gross: return "GROSS_EXPOSURE"; case Reject::NoShort: return "NO_SHORT";
+    case Reject::Cash: return "INSUFFICIENT_CASH"; case Reject::COUNT: break;
   }
   return "?";
 }
@@ -61,6 +63,11 @@ struct RiskCtx {
   Qty pos_qty = 0;         // signed position of this strategy in this instrument
   double ref_px = 0;       // rupees
   bool strat_halted = false;
+  // Open (not yet filled) orders, so several orders together cannot break a limit.
+  Qty pending_sell_qty = 0;          // open sell quantity in this instrument
+  double pending_buy_notional = 0;   // rupees, open buy orders across all instruments
+  double cash = std::numeric_limits<double>::infinity();   // rupees available; infinity = not checked
+  bool long_only = true;             // no short selling (no leverage until approved)
 };
 
 class RiskEngine {
@@ -87,16 +94,19 @@ class RiskEngine {
   double day_start() const { return day_start_; }
   void shift_day_start(double delta) { day_start_ += delta; }   // deposits are not profit
 
-  // An order that only reduces an existing position is always allowed unless the kill switch is on.
-  static bool reduces(const Order& o, Qty pos) {
-    return (o.side == Side::Sell && pos > 0 && o.qty <= pos) ||
-           (o.side == Side::Buy && pos < 0 && o.qty <= -pos);
+  // An order that only reduces an existing position (counting other open orders on the same side)
+  // is always allowed unless the kill switch is on.
+  static bool reduces(const Order& o, Qty pos, Qty pending_same_side = 0) {
+    return (o.side == Side::Sell && pos > 0 && o.qty + pending_same_side <= pos) ||
+           (o.side == Side::Buy && pos < 0 && o.qty + pending_same_side <= -pos);
   }
 
   Reject check(const Order& o, const RiskCtx& c, Ts now_ns) {
     if (o.qty <= 0 || c.ref_px <= 0) return Reject::BadOrder;
     if (killed_) return Reject::Killed;
-    if (!reduces(o, c.pos_qty)) {
+    const bool red = reduces(o, c.pos_qty, o.side == Side::Sell ? c.pending_sell_qty : 0);
+    if (c.long_only && o.side == Side::Sell && !red) return Reject::NoShort;
+    if (!red) {
       if (halted_) return Reject::Halted;
       if (locked_) return Reject::ProfitLock;
       if (c.strat_halted) return Reject::StratHalted;
@@ -104,7 +114,8 @@ class RiskEngine {
       if (notional > lim_.max_order_notional * c.equity) return Reject::Notional;
       if (c.open_orders >= lim_.max_open_orders) return Reject::OpenOrders;
       if (c.pos_qty == 0 && c.positions >= lim_.max_positions) return Reject::Positions;
-      if (c.gross + notional > lim_.max_gross * c.equity) return Reject::Gross;
+      if (c.gross + c.pending_buy_notional + notional > lim_.max_gross * c.equity) return Reject::Gross;
+      if (o.side == Side::Buy && notional + c.pending_buy_notional > c.cash) return Reject::Cash;
     }
     if (!bucket_.take(now_ns)) return Reject::RateLimit;   // last, so vetoed orders use no token
     return Reject::None;

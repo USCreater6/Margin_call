@@ -19,6 +19,9 @@ jobs:
           curl -fsS -X POST localhost:8099/api/order -d '{"sym":"GOLDM","side":"BUY","type":"MARKET","qty":1}' | grep -q '"ok":false'
           curl -fsS -X POST localhost:8099/api/kill -d '{"flatten":true}' | grep -q '"ok":true'
           curl -fsS -X POST localhost:8099/api/order -d '{"sym":"RELIANCE","side":"BUY","type":"MARKET","qty":1}' | grep -q 'Kill switch'
+          curl -fsS -X POST localhost:8099/api/rearm -d '{}' | grep -q '"ok":true'
+          curl -fsS -X POST localhost:8099/api/order -d '{"sym":"TCS","side":"SELL","type":"MARKET","qty":1}' | grep -q 'NO_SHORT'
+          curl -fsS -o /dev/null -w "%{http_code}" --path-as-is "localhost:8099/%2e%2e/CMakeLists.txt" | grep -q 400
           kill %1
       - name: Upload SIMULATION report
         uses: actions/upload-artifact@v4
@@ -34,3 +37,30 @@ jobs:
           cmake -S . -B build-san -DMC_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
           cmake --build build-san -j"$(nproc)" --target mc_tests
           ./build-san/mc_tests
+  real-data-smoke:
+    # Exercises the real download paths end to end on a GitHub runner (NSE, BSE, Wikidata, GLEIF).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build server
+        run: cmake -S . -B build -DMC_WERROR=ON && cmake --build build -j"$(nproc)" --target mc_server
+      - name: Starting prices and 10 days of history
+        run: python3 tools/fetch_latest.py --days 10 && cat data/latest/instruments.csv && cat web/data/history/_index.json
+      - name: Connector data
+        run: python3 tools/build_connector.py
+      - name: Server uses the real closes
+        run: |
+          ./build/mc_server --web web --port 8098 & sleep 2
+          curl -fsS localhost:8098/api/state | grep -q 'NSE close'
+          curl -fsS localhost:8098/data/connector.json | head -c 300; echo
+          curl -fsS "localhost:8098/data/history/RELIANCE.csv" | head -3
+          kill %1
+      - name: Upload connector and price samples
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-data-smoke
+          path: |
+            data/latest/instruments.csv
+            web/data/connector.json
+            web/data/history/_index.json

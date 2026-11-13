@@ -66,6 +66,7 @@ tr.sel td{background:var(--row)}tr.pick{cursor:pointer}
 .btn:hover{border-color:var(--mute)}
 .btn.buy{background:var(--buy);border-color:var(--good)}.btn.sell{background:var(--sell);border-color:var(--bad)}
 .btn.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.btn.arm{background:var(--good);border-color:var(--good);color:#fff;font-weight:600;font-family:var(--mono)}
 .btn.kill{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600;font-family:var(--mono)}
 .btn.sm{padding:0 6px;font-size:11.5px}
 .btn:disabled{opacity:.45;cursor:not-allowed}
@@ -136,12 +137,12 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
   <div class="kv">Day P&amp;L (SIM)<b id="hPnl">-</b></div>
   <div class="kv">Orders / 1s<b id="hRate">0 / 8</b></div>
   <label class="kv" for="selMode">Mode<select id="selMode"><option value="auto">Auto</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
-  <button class="btn kill" data-act="kill">KILL</button>
+  <button class="btn kill" data-act="killOrArm" id="killBtn">KILL</button>
 </header>
 <main>
 
 <section class="view" id="v-terminal">
-  <div class="panel" style="grid-column:span 6"><h2>Watchlist <span class="pill sim">SYNTHETIC</span></h2><div class="fix"><table id="watch"></table></div></div>
+  <div class="panel" style="grid-column:span 6"><h2>Watchlist <span class="pill sim" id="wlSrc" title="">SYNTHETIC</span></h2><div class="fix"><table id="watch"></table></div></div>
   <div class="panel" style="grid-column:span 4"><h2>Book <span id="bookSym" class="mono"></span></h2><div class="fix"><table id="book"></table></div></div>
   <div class="panel" style="grid-column:span 5"><h2>Order ticket <span class="pill sim">SIM</span></h2><div class="fix"><div class="body">
     <div class="g2">
@@ -170,7 +171,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 </section>
 
 <section class="view" id="v-connector">
-  <div class="panel" id="cL"><h2>Company connector <span><select id="cSym" style="width:auto"></select> <span class="pill sim" title="Sample relationships from general knowledge. Real edges and codes load from the sources on the AI Engine page.">SAMPLE · NOT VERIFIED</span></span></h2>
+  <div class="panel" id="cL"><h2>Company connector <span class="row" style="gap:6px;align-items:center"><input id="cQ" list="cList" placeholder="Search NSE symbol, BSE code or name" autocomplete="off" style="width:260px" aria-label="Search company"><datalist id="cList"></datalist><span class="pill sim" id="cSrc" title="">OWNERSHIP LINKS ONLY</span></span></h2>
     <div class="row" style="padding:4px 10px 0;flex:none"><div class="colh" style="flex:1">Not listed</div><div class="colh" style="flex:1;text-align:right">Listed · NSE / BSE</div></div>
     <div id="web"></div>
   </div>
@@ -201,13 +202,16 @@ output { instrument, action: BUY|SELL|HOLD,
   <div class="panel c4"><h2>Backtest and latency</h2><div class="scroll"><div class="body" id="rep"><div class="empty">No results loaded. Run <span class="mono">scripts/build_and_report.sh</span>; the C++ engine writes its SIMULATION report to <span class="mono">web/reports/</span> and it appears here.</div></div></div></div>
   <div class="panel c12"><h2>Sources feeding the engine</h2><div class="scroll"><table>
     <tr><th>Feed</th><th>Source</th><th>API key</th><th>Covers</th><th>Status</th></tr>
-    <tr><td>Prices</td><td class="w">NSE and MCX daily exchange files</td><td>none</td><td class="w">Daily bars</td><td><span class="pill">not loaded</span></td></tr>
+    <tr><td>Prices</td><td class="w">NSE daily files: equity and F&amp;O bhavcopy, index closes</td><td>none</td><td class="w">Starting prices (last close) and one year of daily history, fetched when the terminal starts</td><td><span class="pill ok">in use</span></td></tr>
+    <tr><td>Prices</td><td class="w">MCX daily files</td><td>-</td><td class="w">Commodity futures</td><td><span class="pill bad">blocked (HTTP 403)</span></td></tr>
     <tr><td>News text</td><td class="w">GDELT DOC 2.0 API</td><td>none</td><td class="w">Global news search with tone, rolling window of about 3 months</td><td><span class="pill">not loaded</span></td></tr>
     <tr><td>News text</td><td class="w">Publisher RSS feeds and NSE / BSE announcements</td><td>none</td><td class="w">Indian business headlines and company filings</td><td><span class="verify">must verify terms</span></td></tr>
     <tr><td>News text</td><td class="w">Keyed news APIs</td><td>free key, your sign-up</td><td class="w">Extra coverage; limits differ per provider</td><td><span class="verify">must verify</span></td></tr>
     <tr><td>Video</td><td class="w">Official live-stream embeds of news channels</td><td>none</td><td class="w">Live TV panel</td><td><span class="verify">must verify per channel</span></td></tr>
-    <tr><td>Connector</td><td class="w">GLEIF API (who owns whom)</td><td>none</td><td class="w">Parent and subsidiary links where both hold an LEI</td><td><span class="pill">not loaded</span></td></tr>
-    <tr><td>Connector</td><td class="w">Annual-report subsidiary, joint-venture and related-party lists; Wikidata</td><td>none</td><td class="w">Ownership and group links</td><td><span class="verify">must verify coverage</span></td></tr>
+    <tr><td>Connector</td><td class="w">NSE equity list and BSE daily file</td><td>none</td><td class="w">All listed codes, matched by ISIN</td><td><span class="pill ok">in use</span></td></tr>
+    <tr><td>Connector</td><td class="w">GLEIF API (who owns whom), via LEIs held in Wikidata</td><td>none</td><td class="w">Direct parent and subsidiaries</td><td><span class="pill ok">in use</span></td></tr>
+    <tr><td>Connector</td><td class="w">Wikidata (subsidiary, parent, owner, owned company)</td><td>none</td><td class="w">About 200 NSE-listed companies, 75 with links (probe, 13 Nov 2026)</td><td><span class="pill ok">in use</span></td></tr>
+    <tr><td>Connector</td><td class="w">Annual-report lists (tools/connector_annual_reports.csv)</td><td>none</td><td class="w">Subsidiaries, associates, joint ventures with page references</td><td><span class="pill warn">file ready, empty</span></td></tr>
     <tr><td>Connector</td><td class="w">Supplier and customer links</td><td>-</td><td class="w">No free dataset found. Bloomberg's is proprietary.</td><td><span class="pill lock">not available free</span></td></tr>
     <tr><td>Fundamentals</td><td class="w">NSE / BSE result, corporate-action and shareholding filings</td><td>none</td><td class="w">Financials, actions, shareholding</td><td><span class="verify">must verify access</span></td></tr>
   </table></div></div>
@@ -267,11 +271,8 @@ const I=[{s:'NIFTY-FUT',v:'NSE F&O',p:25000,t:.5},{s:'RELIANCE',v:'NSE',p:1400,t
 I.forEach(i=>{i.o=i.p});
 const STR=[{n:'Momentum',ph:'Launch',on:true,a:.5},{n:'Mean reversion',ph:'Launch',on:true,a:.5},{n:'AI engine (GRIT)',ph:'Slot open'},{n:'Basis arbitrage',ph:'Phase 2'},{n:'Cross-exchange arb',ph:'Phase 3'},{n:'Statistical arb',ph:'Phase 4'},{n:'Market making',ph:'Phase 5'}];
 const HEAD=[['ADVERSE','ENERGY','Crude inventories rise more than forecast'],['ADVERSE','INDEX','Regulator proposes tighter margin rules for index derivatives'],['ADVERSE','BANKS','Large bank reports higher provisions in quarterly results'],['NEUTRAL','GOLD','Gold demand steady ahead of the festival season'],['ADVERSE','IT','IT services firm trims revenue guidance'],['ADVERSE','ENERGY','Refinery outage reported at a west-coast facility'],['NEUTRAL','MACRO','Central bank holds policy rate, as expected']];
-const WEB={RELIANCE:{n:'RELIANCE INDUSTRIES LTD',nse:'RELIANCE',bse:'500325',
-  R:[['Jio Financial Services Ltd','JIOFIN','543940','Group company'],['Network18 Media & Investments Ltd','NETWORK18','532798','Subsidiary'],['Just Dial Ltd','JUSTDIAL','535648','Subsidiary'],['Hathway Cable & Datacom Ltd','HATHWAY','533162','Subsidiary'],['DEN Networks Ltd','DEN','533137','Subsidiary'],['Alok Industries Ltd','ALOKINDS','521070','Joint control'],['Reliance Industrial Infrastructure Ltd','RIIL','523445','Associate']],
-  L:[['Reliance Retail Ventures Ltd','Subsidiary'],['Jio Platforms Ltd','Subsidiary'],['Reliance Jio Infocomm Ltd','Subsidiary'],['Reliance New Energy Ltd','Subsidiary'],['Reliance BP Mobility Ltd','Joint venture'],['Star India Pvt Ltd','Joint venture']]}};
 let API=false,timer=null;
-let S,stub=false,tk=0,hi=0,news=[],C={sym:'RELIANCE',pick:null,tab:0};
+let S,stub=false,tk=0,hi=0,news=[],C={isin:'',pick:null,data:null,idx:null,hist:{}};
 function fresh(){S={cash:START,dep:0,real:0,fees:0,turn:0,curve:[],orders:[],pos:{},audit:[],ledger:[{t:now(),k:'OPENING DEMO BALANCE',a:START,b:START}],killed:false,halt:'',lock:false,sel:0,stamps:[],id:1}}
 fresh();
 const inst=s=>I.find(i=>i.s===s);
@@ -289,6 +290,7 @@ function check(o){
   if(rateNow()>=L.rate)return'Rate cap reached: 8 orders per second';
   const p=S.pos[o.s],sq=o.side==='BUY'?o.q:-o.q;
   if(p&&Math.sign(p.q)!==Math.sign(sq)&&o.q<=Math.abs(p.q))return'';
+  if(o.side==='SELL')return'Long-only: you can sell only what you hold';
   if(S.halt)return S.halt+': no new risk';
   if(S.lock)return'Daily profit lockout: no new risk';
   const n=o.q*o.ref,eq=equity();
@@ -340,6 +342,7 @@ function render(){
   const eq=equity(),d=dayPnl(),ps=Object.entries(S.pos);
   $('#hEq').textContent=inr(eq);$('#hPnl').textContent=inr(d)+' ('+pct(d/base())+')';$('#hPnl').className=cls(d);
   $('#hRate').textContent=rateNow()+' / '+L.rate;
+  const kb=$('#killBtn');kb.textContent=S.killed?'RE-ARM':'KILL';kb.className='btn '+(S.killed?'arm':'kill');
   const st=$('#state');st.textContent=S.killed?'KILLED':S.halt?'HALTED':S.lock?'PROFIT LOCK':'ARMED';st.className='pill '+(S.killed||S.halt?'bad':S.lock?'warn':'ok');
   $('#stubBtn').textContent=stub?'Stop stub signals':'Start stub signals';
   $('#watch').innerHTML='<tr><th>Instrument</th><th>Venue</th><th>Last</th><th>Chg</th></tr>'+I.map((i,k)=>{const c=i.p/i.o-1;return'<tr class="pick'+(k===S.sel?' sel':'')+'" data-sel="'+k+'"><td>'+i.s+'</td><td class="mute">'+i.v+'</td><td>'+i.p.toFixed(2)+'</td><td class="'+cls(c)+'">'+pct(c)+'</td></tr>'}).join('');
@@ -353,10 +356,10 @@ function render(){
   $('#book').innerHTML=bk;
   $('#news').innerHTML='<tr><th>Time</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline (sample)</th></tr>'+news.slice(0,3).map(x=>'<tr><td>'+x.t+'</td><td><span class="pill '+(x.k==='ADVERSE'?'bad':'lock')+'">'+x.k+'</span></td><td>'+x.g+'</td><td class="w">'+x.m+'</td></tr>').join('');
   $('#tape').innerHTML=HEAD.map(h=>'<span>SAMPLE · <b class="'+(h[0]==='ADVERSE'?'dn':'mute')+'">'+h[0]+'</b> · '+h[2]+'</span>').join('');
-  $('#blotter').innerHTML='<tr><th>Order</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,30).map(o=>'<tr title="'+o.t+' · '+o.src+(o.why?' · '+o.why:'')+'"><td>#'+o.id.slice(4)+(o.src==='AI-STUB'?' <span class="mute">AI</span>':'')+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+(o.fp||o.px||0).toFixed(2)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+o.st+'">'+({FILLED:'FILL',REJECTED_RISK:'VETO',ACKED:'OPEN',PARTIALLY_FILLED:'PART',CANCELLED:'CXL'}[o.st]||o.st)+'</span></td></tr>').join('')||'<tr><td colspan="6" class="mute w">No simulated orders yet. Place one from the ticket or start stub signals.</td></tr>');
+  $('#blotter').innerHTML='<tr><th>Order</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,30).map(o=>'<tr title="'+H(o.t+' · '+o.src+(o.why?' · '+o.why:''))+'"><td>#'+o.id.slice(4)+(o.src==='AI-STUB'?' <span class="mute">AI</span>':'')+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+pxCell(o)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+o.st+'">'+({FILLED:'FILL',REJECTED_RISK:'VETO',ACKED:'OPEN',PARTIALLY_FILLED:'PART',CANCELLED:'CXL'}[o.st]||o.st)+'</span></td></tr>'+(o.st==='REJECTED_RISK'&&o===S.orders[0]?'<tr><td colspan="6" class="w dn" style="font-size:11px">'+H(o.why)+(FUNDABLE.includes(o.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':'')+'</td></tr>':'')).join('')||'<tr><td colspan="6" class="mute w">No simulated orders yet. Place one from the ticket or start stub signals.</td></tr>');
   $('#pos').innerHTML='<tr><th>Instrument</th><th>Qty</th><th>Unrealized</th></tr>'+(ps.map(([s,p])=>{const u=(inst(s).p-p.avg)*p.q;return'<tr title="avg '+p.avg.toFixed(2)+'"><td>'+s+'</td><td>'+p.q+'</td><td class="'+cls(u)+'">'+inr(u)+'</td></tr>'}).join('')||'<tr><td colspan="3" class="mute w">Flat. No simulated positions.</td></tr>');
-  const rows=a=>'<tr><th>Time</th><th>Event</th><th style="text-align:left">Detail</th></tr>'+(a.map(x=>'<tr><td>'+x.t+'</td><td>'+x.k+'</td><td class="w">'+x.m+'</td></tr>').join('')||'<tr><td colspan="3" class="mute">Nothing recorded yet.</td></tr>');
-  $('#alerts').innerHTML='<tr><th>Event</th><th style="text-align:left">Detail</th></tr>'+(S.audit.filter(x=>x.k!=='ORDER'&&x.k!=='FILL').slice(0,20).map(x=>'<tr title="'+x.t+'"><td>'+x.k+'</td><td class="w">'+x.m+'</td></tr>').join('')||'<tr><td colspan="2" class="mute">Nothing recorded yet.</td></tr>');
+  const rows=a=>'<tr><th>Time</th><th>Event</th><th style="text-align:left">Detail</th></tr>'+(a.map(x=>'<tr><td>'+x.t+'</td><td>'+x.k+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="3" class="mute">Nothing recorded yet.</td></tr>');
+  $('#alerts').innerHTML='<tr><th>Event</th><th style="text-align:left">Detail</th></tr>'+(S.audit.filter(x=>x.k!=='ORDER'&&x.k!=='FILL').slice(0,20).map(x=>'<tr title="'+x.t+'"><td>'+H(x.k)+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="2" class="mute">Nothing recorded yet.</td></tr>');
   $('#audit').innerHTML=rows(S.audit.slice(0,80));
   $('#wCash').textContent=inr(S.cash);
   const un=ps.reduce((a,[s,p])=>a+(inst(s).p-p.avg)*p.q,0);
@@ -366,38 +369,69 @@ function render(){
   $('#curve').innerHTML=curve();
   $('#daySum').innerHTML='<tr><th>Item</th><th>Value</th></tr>'+[['Net day P&L (SIM)',inr(d),cls(d)],['Realized',inr(S.real),cls(S.real)],['Unrealized',inr(un),cls(un)],['Fees (placeholder 0.03%)',inr(-S.fees),''],['Turnover',inr(S.turn),''],['Orders placed',S.orders.length,''],['Filled',cnt(o=>o.st==='FILLED'),''],['Rejected by risk',cnt(o=>o.st==='REJECTED_RISK'),''],['Cancelled',cnt(o=>o.st==='CANCELLED'),''],['Open',openOrd().length,''],['From AI stub',cnt(o=>o.src==='AI-STUB'),'']].map(r=>'<tr><td>'+r[0]+'</td><td class="'+r[2]+'">'+r[1]+'</td></tr>').join('');
   $('#histN').textContent=S.orders.length+' orders';
-  $('#hist').innerHTML='<tr><th>Order</th><th>Time</th><th>Source</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Type</th><th>Price</th><th>State</th><th style="text-align:left">Risk reason</th></tr>'+(S.orders.map(o=>'<tr><td>'+o.id+'</td><td>'+o.t+'</td><td class="mute">'+o.src+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+o.type+'</td><td>'+(o.fp||o.px||0).toFixed(2)+'</td><td>'+o.st+'</td><td class="w">'+(o.why||'')+'</td></tr>').join('')||'<tr><td colspan="10" class="mute">No simulated orders yet today.</td></tr>');
+  $('#hist').innerHTML='<tr><th>Order</th><th>Time</th><th>Source</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Type</th><th>Price</th><th>State</th><th style="text-align:left">Risk reason</th></tr>'+(S.orders.map(o=>'<tr><td>'+o.id+'</td><td>'+o.t+'</td><td class="mute">'+o.src+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+o.type+'</td><td>'+pxCell(o)+'</td><td>'+o.st+'</td><td class="w">'+H(o.why||'')+'</td></tr>').join('')||'<tr><td colspan="10" class="mute">No simulated orders yet today.</td></tr>');
   $('#expo').innerHTML='<tr><th>Instrument</th><th>Qty</th><th>Value</th><th>% of equity</th><th>Share</th></tr>'+I.map(i=>{const p=S.pos[i.s],v=p?Math.abs(p.q*i.p):0;return'<tr><td>'+i.s+'</td><td>'+(p?p.q:0)+'</td><td>'+inr(v)+'</td><td>'+pct(v/eq)+'</td><td><div class="bar"><i style="width:'+Math.min(100,v/eq*100).toFixed(0)+'%"></i></div></td></tr>'}).join('');
   $('#revt').innerHTML=rows(S.audit.filter(x=>['RISK VETO','STOP','HALT','LOCKOUT','KILL SWITCH','CANCEL ALL','FLATTEN','RE-ARM'].includes(x.k)).slice(0,60));
-  $('#strat').innerHTML='<tr><th>Strategy</th><th>Phase</th><th>Allocation</th><th>Status</th></tr>'+STR.map((x,k)=>'<tr><td>'+x.n+'</td><td class="mute">'+x.ph+'</td><td>'+(x.a?pct(x.a):'-')+'</td><td>'+(x.a?'<button class="btn sm" data-st="'+k+'">'+(x.on?'Enabled in SIM':'Disabled')+'</button>':'<span class="pill lock">LOCKED</span>')+'</td></tr>').join('');
+  $('#strat').innerHTML='<tr><th>Strategy</th><th>Phase</th><th>Allocation</th><th>Status</th></tr>'+STR.map((x,k)=>'<tr><td>'+x.n+'</td><td class="mute">'+x.ph+'</td><td>'+(x.a?pct(x.a):'-')+'</td><td>'+(x.a?(API?'<span class="pill" title="Runs in the backtest on the AI Engine page; not yet connected to the live session">BACKTEST ONLY</span>':'<button class="btn sm" data-st="'+k+'">'+(x.on?'Enabled in SIM':'Disabled')+'</button>'):'<span class="pill lock">LOCKED</span>')+'</td></tr>').join('');
   const bar=(u,m)=>{const r=Math.min(1,Math.max(0,u/m));return'<div class="bar"><i class="'+(r>.9?'b':r>.6?'w':'')+'" style="width:'+(r*100).toFixed(0)+'%"></i></div>'};
   const R=[['Per-trade stop','2% of trade capital',0,'auto-exit',''],['Daily profit lockout','+10% · '+inr(L.profit*base()),0,inr(Math.max(0,d)),bar(Math.max(0,d),L.profit*base())],['Global daily loss','3% · '+inr(L.loss*base()),1,inr(Math.max(0,-d)),bar(Math.max(0,-d),L.loss*base())],['Per-strategy daily loss','1.5% · '+inr(L.stratLoss*base()),1,'no runs',''],['Max order value','25% of equity · '+inr(L.notional*eq),1,'per order',''],['Gross exposure','100% of equity',1,inr(gross()),bar(gross(),L.gross*eq)],['Open positions',String(L.maxPos),1,String(ps.length),bar(ps.length,L.maxPos)],['Open orders',String(L.maxOrd),1,String(openOrd().length),bar(openOrd().length,L.maxOrd)],['Order rate','8 per second',0,rateNow()+' in last 1s',bar(rateNow(),L.rate)]];
   $('#risk').innerHTML='<tr><th>Limit</th><th>Value</th><th>Source</th><th>Used now</th><th>Usage</th></tr>'+R.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td>'+(r[2]?'<span class="pill warn">proposed</span>':'<span class="mute">fixed by you</span>')+'</td><td>'+r[3]+'</td><td>'+(r[4]||'<span class="mute">-</span>')+'</td></tr>').join('');
 }
 
-/* connector */
-function seedRand(str){let h=1779033703;for(const c of str)h=Math.imul(h^c.charCodeAt(0),3432918353),h=h<<13|h>>>19;return()=>{h=Math.imul(h^h>>>16,2246822507);h=Math.imul(h^h>>>13,3266489909);return((h^=h>>>16)>>>0)/4294967296}}
-function chart(code){
-  const r=seedRand(code),n=250,v=[100];for(let k=1;k<n;k++)v.push(Math.max(20,v[k-1]*(1+(r()-.49)*.03)));
-  const lo=Math.min(...v),hi=Math.max(...v),X=k=>30+k*(265/(n-1)),Y=x=>8+(1-(x-lo)/(hi-lo))*84;
-  const pts=v.map((x,k)=>X(k).toFixed(1)+','+Y(x).toFixed(1)).join(' ');
-  return'<svg viewBox="0 0 300 112" style="width:100%;max-height:42vh;display:block" role="img" aria-label="Sample daily price series" preserveAspectRatio="xMidYMid meet"><line x1="30" y1="8" x2="295" y2="8" stroke="var(--line)"/><line x1="30" y1="50" x2="295" y2="50" stroke="var(--line)"/><line x1="30" y1="92" x2="295" y2="92" stroke="var(--line)"/><polygon points="30,92 '+pts+' 295,92" fill="var(--accent)" opacity=".14"/><polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="1.2"/><circle cx="295" cy="'+Y(v[n-1]).toFixed(1)+'" r="2.5" fill="var(--accent)"/><text x="2" y="11">'+hi.toFixed(0)+'</text><text x="2" y="95">'+lo.toFixed(0)+'</text><text x="30" y="108">250 daily bars · SAMPLE, not market data</text></svg>';
+/* connector: real listings and ownership links from data/connector.json (built by tools/build_connector.py) */
+const H=x=>String(x==null?'':x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function loadConnector(){
+  try{const r=await fetch('data/connector.json',{cache:'no-store'});if(!r.ok)throw 0;C.data=await r.json()}
+  catch(e){$('#web').innerHTML='<div class="body"><div class="empty">Connector data is not built yet. It builds automatically when the Codespace starts (a few minutes on first start), then refresh this page.</div></div>';return}
+  C.idx={};C.data.c.forEach(x=>{C.idx[x[0]]=x});
+  $('#cList').innerHTML=C.data.c.map(x=>'<option value="'+H((x[1]||x[2])+' · '+x[3])+'">').join('');
+  const nl=Object.values(C.data.l).filter(v=>v.length).length;
+  $('#cSrc').textContent=C.data.c.length+' COMPANIES · '+nl+' WITH LINKS';$('#cSrc').title=C.data.note+' Built '+C.data.asof+'.';
+  const rel=C.data.c.find(x=>x[1]==='RELIANCE');if(rel&&!C.isin)C.isin=rel[0];renderWeb();renderDetail()
 }
-const DT=['Price history','Financials','Corporate actions','Shareholding'];
-const DSRC=['','Quarterly and annual results from NSE / BSE filings.','Dividends, splits, bonuses and rights from exchange corporate-action files.','Quarterly shareholding pattern from exchange filings.'];
+function findCompany(q){
+  if(!C.data)return null;q=q.trim().toUpperCase();if(!q)return null;
+  const code=q.split(' · ')[0].trim();
+  return C.data.c.find(x=>x[1]===code||x[2]===code||x[0]===code)||C.data.c.find(x=>x[3].toUpperCase()===q)||C.data.c.find(x=>x[3].toUpperCase().includes(q))||null;
+}
+const codes=x=>(x[1]?'NSE '+H(x[1]):'')+(x[1]&&x[2]?' · ':'')+(x[2]?'BSE '+H(x[2]):'');
 function renderWeb(){
-  const w=WEB[C.sym];
-  if(!w){$('#web').innerHTML='<div class="body"><div class="empty">No relationship data loaded for '+C.sym+' yet. Only RELIANCE has sample data in this preview.</div></div>';C.pick=null;renderDetail();return}
-  $('#web').innerHTML='<div class="web"><ul class="L">'+w.L.map((x,k)=>'<li><button class="node'+(C.pick==='L'+k?' on':'')+'" data-node="L'+k+'"><span class="rel">'+x[1]+'</span>'+x[0]+'</button></li>').join('')+'</ul><div class="hub"><b>'+w.nse+'</b>'+w.n+'<br><span class="mute">NSE '+w.nse+' · BSE '+w.bse+'</span></div><ul class="R">'+w.R.map((x,k)=>'<li><button class="node'+(C.pick==='R'+k?' on':'')+'" data-node="R'+k+'"><span class="rel">'+x[3]+'</span>'+x[0]+'<small>NSE '+x[1]+' · BSE '+x[2]+'</small></button></li>').join('')+'</ul></div>';
+  if(!C.data)return;
+  const me=C.idx[C.isin];if(!me){$('#web').innerHTML='<div class="body"><div class="empty">Type an NSE symbol, BSE code or company name in the search box, then press Enter.</div></div>';renderDetail();return}
+  const links=C.data.l[C.isin]||[],L=[],R=[];
+  links.forEach((x,k)=>{(x[1]&&C.idx[x[1]]?R:L).push([x,k])});
+  const node=([x,k],listed)=>{const o=listed?C.idx[x[1]]:null;return'<li><button class="node'+(C.pick===k?' on':'')+'" data-node="'+k+'"><span class="rel">'+H(x[2])+'</span>'+H(listed?o[3]:x[0])+'<small>'+(listed?codes(o)+' · ':'')+H(x[3])+'</small></button></li>'};
+  const empty='<li class="mute" style="padding:6px 10px">None found</li>';
+  $('#web').innerHTML=(links.length?'':'<div class="body"><div class="empty">No ownership links found for this company in Wikidata, GLEIF or the annual-report file. Supplier and customer links are not available from free sources.</div></div>')
+    +'<div class="web"><ul class="L">'+(L.map(n=>node(n,false)).join('')||empty)+'</ul><div class="hub"><b>'+H(me[1]||me[2])+'</b>'+H(me[3])+'<br><span class="mute">'+codes(me)+'</span></div><ul class="R">'+(R.map(n=>node(n,true)).join('')||empty)+'</ul></div>';
   renderDetail();
 }
-function renderDetail(){
-  const w=WEB[C.sym],p=C.pick;
-  if(!w||!p){$('#dCode').textContent='';$('#dBody').innerHTML='<div class="empty">Click a connected company to open its history.</div>';return}
-  const x=w[p[0]][+p.slice(1)];
-  if(p[0]==='L'){$('#dCode').textContent='UNLISTED';$('#dBody').innerHTML='<b style="font-size:16px">'+x[0]+'</b><p class="note">'+x[1]+' of '+w.n+'. Not listed, so there is no NSE or BSE code and no exchange price history. Company filings would come from the corporate registry. <span class="verify">must verify</span></p>';return}
-  $('#dCode').textContent='NSE '+x[1]+' · BSE '+x[2];
-  $('#dBody').innerHTML='<b style="font-size:16px">'+x[0]+'</b> <span class="mute">· '+x[3]+'</span>'+chart(x[1])+'<p class="note">Built version: full daily history from the exchange files, with open, high, low, close and volume.</p><div class="g3">'+DT.slice(1).map((t,k)=>'<div><div class="colh" style="padding:0 0 3px">'+t+'</div><div class="empty">Not loaded. Source: '+DSRC[k+1]+' <span class="verify">must verify</span></div></div>').join('')+'</div>';
+function chart(rows){
+  const v=rows.map(r=>r[4]),n=v.length,lo=Math.min(...v),hi=Math.max(...v),sp=(hi-lo)||1,X=k=>40+k*(255/Math.max(1,n-1)),Y=x=>8+(1-(x-lo)/sp)*84;
+  const pts=v.map((x,k)=>X(k).toFixed(1)+','+Y(x).toFixed(1)).join(' ');
+  return'<svg viewBox="0 0 300 112" style="width:100%;max-height:42vh;display:block" role="img" aria-label="Daily closing prices"><line x1="40" y1="8" x2="295" y2="8" stroke="var(--line)"/><line x1="40" y1="92" x2="295" y2="92" stroke="var(--line)"/><polygon points="40,92 '+pts+' '+X(n-1).toFixed(1)+',92" fill="var(--accent)" opacity=".14"/><polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="1.2"/><circle cx="'+X(n-1).toFixed(1)+'" cy="'+Y(v[n-1]).toFixed(1)+'" r="2.5" fill="var(--accent)"/><text x="2" y="11">'+hi.toFixed(2)+'</text><text x="2" y="95">'+lo.toFixed(2)+'</text><text x="40" y="108">'+rows[0][0]+' to '+rows[n-1][0]+' · '+n+' daily closes · NSE bhavcopy</text></svg>';
+}
+async function history(sym){
+  if(C.hist[sym])return C.hist[sym];
+  try{const r=await fetch('data/history/'+encodeURIComponent(sym)+'.csv',{cache:'no-store'});if(!r.ok)return C.hist[sym]={rows:[],notes:[]};
+    const t=await r.text(),rows=[],notes=[];
+    t.split('\n').forEach(l=>{if(l.startsWith('# UNADJUSTED'))notes.push(l.slice(2));else if(/^\d{8},/.test(l)){const c=l.split(',');rows.push([c[0].slice(0,4)+'-'+c[0].slice(4,6)+'-'+c[0].slice(6),+c[1],+c[2],+c[3],+c[4],+c[5]])}});
+    return C.hist[sym]={rows,notes}}catch(e){return{rows:[],notes:[]}}
+}
+async function renderDetail(){
+  const me=C.data&&C.idx[C.isin],links=me?(C.data.l[C.isin]||[]):[];
+  if(!me||C.pick===null||!links[C.pick]){$('#dCode').textContent='';$('#dBody').innerHTML='<div class="empty">Click a connected company to open its history.</div>';return}
+  const x=links[C.pick],o=x[1]?C.idx[x[1]]:null;
+  if(!o){$('#dCode').textContent='UNLISTED';$('#dBody').innerHTML='<b style="font-size:16px">'+H(x[0])+'</b><p class="note">'+H(x[2])+' of '+H(me[3])+' · source: '+H(x[3])+'. Not listed on NSE or BSE, so there is no exchange code or price history.</p>';return}
+  $('#dCode').innerHTML=codes(o);
+  const head='<b style="font-size:16px">'+H(o[3])+'</b> <span class="mute">· '+H(x[2])+' of '+H(me[3])+' · source: '+H(x[3])+'</span> <button class="btn sm" data-open="'+H(o[0])+'">Open its connections</button>';
+  $('#dBody').innerHTML=head+'<div class="empty" style="margin-top:6px">Loading price history…</div>';
+  const h=o[1]?await history(o[1]):{rows:[],notes:[]};
+  if(C.data.l[C.isin][C.pick]!==x)return;
+  const last=h.rows[h.rows.length-1];
+  $('#dBody').innerHTML=head+(h.rows.length>1?chart(h.rows)+'<table style="margin-top:4px"><tr><th>Last date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr><tr><td>'+last[0]+'</td><td>'+last[1].toFixed(2)+'</td><td>'+last[2].toFixed(2)+'</td><td>'+last[3].toFixed(2)+'</td><td>'+last[4].toFixed(2)+'</td><td>'+last[5].toLocaleString('en-IN')+'</td></tr></table>'+(h.notes.length?'<p class="note dn">'+h.notes.map(H).join('<br>')+'</p>':'')
+    :'<div class="empty" style="margin-top:6px">No NSE price history loaded for this company'+(o[1]?'':' (it has a BSE code only)')+'.</div>')
+    +'<div class="g3">'+['Financials','Corporate actions','Shareholding'].map(t=>'<div><div class="colh" style="padding:0 0 3px">'+t+'</div><div class="empty">Not loaded: no verified free source yet.</div></div>').join('')+'</div>';
 }
 function curve(){
   const v=S.curve,n=v.length;if(n<2)return'<div class="empty">Collecting data. The curve starts after a few seconds.</div>';
@@ -423,21 +457,25 @@ let mCb=null;
 function modal(t,b,ok,cb){$('#mT').textContent=t;$('#mB').innerHTML=b;$('#mOk').textContent=ok;mCb=cb;$('#modal').classList.add('on')}
 function closeM(){$('#modal').classList.remove('on');mCb=null}
 $('#mOk').onclick=()=>{const f=mCb;if(f&&f()===false)return;closeM();render()};
+const FUNDABLE=['INSUFFICIENT_CASH','ORDER_NOTIONAL','GROSS_EXPOSURE'];
+// price shown in tables: average fill price if filled, limit price if resting, otherwise a dash
+const pxCell=o=>o.fp>0?o.fp.toFixed(2):o.px>0?o.px.toFixed(2):'-';
 function order(side){
   const s=$('#tSym').value,type=$('#tType').value,q=Math.floor(+$('#tQty').value),px=+$('#tPx').value,m=$('#tMsg');
   if(!(q>=1)){m.textContent='Enter a quantity of 1 or more.';m.className='note dn';return}
   if(type==='LIMIT'&&!(px>0)){m.textContent='Enter a limit price for a LIMIT order.';m.className='note dn';return}
-  if(API){post('order',{sym:s,side,type,qty:q,px:type==='LIMIT'?px:0}).then(r=>{m.textContent=r.ok?'Simulated order accepted by the C++ engine.':'Risk engine rejected the order: '+r.why+'.';m.className='note '+(r.ok?'up':'dn');poll()});return}
+  if(API){post('order',{sym:s,side,type,qty:q,px:type==='LIMIT'?px:0}).then(r=>{m.innerHTML=r.ok?'Simulated order accepted by the C++ engine.':'Rejected: '+H(r.why)+'.'+(FUNDABLE.includes(r.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':r.code==='KILL_SWITCH'?' <button class="btn sm arm" data-act="rearm">Re-arm</button>':'');m.className='note '+(r.ok?'up':'dn');poll()});return}
   const why=submit(s,side,type,q,px);
   m.textContent=why?'Risk engine rejected the order: '+why+'.':'Simulated order accepted.';m.className='note '+(why?'dn':'up');render();
 }
 const ACT={
+  killOrArm:()=>S.killed?ACT.rearm():ACT.kill(),
   buy:()=>order('BUY'),sell:()=>order('SELL'),mNo:closeM,
   stub:()=>{if(API){post('stub',{on:!stub}).then(poll);return}stub=!stub;log('AI STUB','Stub signals '+(stub?'started':'stopped')+' by GJ');render()},
-  kill:()=>modal('Activate kill switch?','<p>Cancels every open simulated order and blocks all new orders, including AI orders, until you re-arm from Admin.</p><label style="display:flex;gap:8px;align-items:center"><input id="kFlat" type="checkbox" style="width:auto"> Also flatten all positions</label>','Activate kill switch',()=>{const f=$('#kFlat').checked;if(API){post('kill',{flatten:f}).then(poll);return}if(f)flatten();else cancelAll();S.killed=true;stub=false;log('KILL SWITCH','Activated by GJ'+(f?' with flatten':''))}),
+  kill:()=>modal('Activate kill switch?','<p>Cancels every open simulated order and blocks all new orders, including AI orders, until you press RE-ARM (same button, top right).</p><label style="display:flex;gap:8px;align-items:center"><input id="kFlat" type="checkbox" style="width:auto"> Also flatten all positions</label>','Activate kill switch',()=>{const f=$('#kFlat').checked;if(API){post('kill',{flatten:f}).then(poll);return}if(f)flatten();else cancelAll();S.killed=true;stub=false;log('KILL SWITCH','Activated by GJ'+(f?' with flatten':''))}),
   cancelAll:()=>modal('Cancel all open orders?','<p>'+openOrd().length+' open simulated order(s) will be cancelled.</p>','Cancel all orders',()=>{if(API){post('cancel_all').then(poll);return}cancelAll()}),
   flatten:()=>modal('Flatten all positions?','<p>Closes '+Object.keys(S.pos).length+' simulated position(s) at market and cancels open orders.</p>','Flatten all',()=>{if(API){post('flatten').then(poll);return}flatten()}),
-  rearm:()=>modal('Re-arm the system?','<p>Clears the kill switch, daily halt and profit lockout for this demo session. Daily limits are then measured from current equity.</p>','Re-arm',()=>{if(API){post('rearm').then(poll);return}S.killed=false;S.halt='';S.lock=false;log('RE-ARM','System re-armed by GJ')}),
+  rearm:()=>modal('Re-arm the system?','<p>Clears the kill switch so new orders are accepted again.</p>'+(S.halt?'<p class="dn">The daily loss halt stays on until the next trading day. It is a hard limit and re-arming does not clear it.</p>':'')+(S.lock?'<p class="warn">The +10% profit lockout stays on until the next trading day.</p>':''),'Re-arm',()=>{if(API){post('rearm').then(poll);return}S.killed=false;log('RE-ARM','Kill switch cleared by GJ')}),
   reset:()=>modal('Reset demo account?','<p>Clears all simulated orders, positions and the ledger, and restores the opening demo balance of '+inr(START)+'.</p>','Reset demo account',()=>{if(API){post('reset').then(poll);return}fresh();stub=false;log('RESET','Demo account reset')}),
   fund:()=>modal('Fund demo wallet','<p class="mute">Demo money only. No payment is taken.</p><label class="f" for="fAmt">Amount (₹)<input id="fAmt" type="number" min="1" value="50000"></label><div class="row" style="margin-top:6px">'+[10000,50000,100000,500000].map(a=>'<button class="btn sm" data-amt="'+a+'">'+inr(a)+'</button>').join('')+'</div><p class="note dn" id="fErr"></p>','Add demo funds',()=>{const a=+$('#fAmt').value;if(!(a>0)){$('#fErr').textContent='Enter an amount above zero.';return false}if(API){post('fund',{amount:a}).then(poll);return}S.cash+=a;S.dep+=a;S.ledger.unshift({t:now(),k:'DEMO FUNDING',a,b:base()});log('WALLET','Demo wallet funded with '+inr(a))})
 };
@@ -445,10 +483,12 @@ const ACT={
 const post=(p,b)=>fetch('api/'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(r=>r.json()).catch(()=>({ok:false,why:'Engine not reachable'}));
 const hms=w=>new Date(w).toLocaleTimeString('en-GB');
 function applyState(j){
-  if(I.length!==j.inst.length||I.some((x,k)=>x.s!==j.inst[k].s)){I.length=0;j.inst.forEach(x=>I.push({s:x.s,v:x.v,p:x.p,o:x.o,t:x.t}));$('#tSym').innerHTML=I.map(i=>'<option>'+i.s+'</option>').join('');if(S.sel>=I.length)S.sel=0}
+  if(I.length!==j.inst.length||I.some((x,k)=>x.s!==j.inst[k].s)){I.length=0;j.inst.forEach(x=>I.push({s:x.s,v:x.v,p:x.p,o:x.o,t:x.t,lot:x.lot,src:x.src}));$('#tSym').innerHTML=I.map(i=>'<option>'+i.s+'</option>').join('');if(S.sel>=I.length)S.sel=0}
   else j.inst.forEach((x,k)=>{I[k].p=x.p;I[k].o=x.o});
+  const srcs=[...new Set(j.inst.map(x=>x.src))];const real=j.inst.find(x=>/^NSE close/.test(x.src||''));
+  $('#wlSrc').textContent=real?'CLOSE '+new Date(real.src.split(' ')[2]+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short'}).toUpperCase()+' + SIM':'PLACEHOLDER';$('#wlSrc').title='Starting prices: '+srcs.join('; ')+'. Chg is measured from the starting price. Ticks after it are synthetic.';
   Object.assign(S,{cash:j.cash,dep:j.dep,real:j.real,fees:j.fees,turn:j.turn,killed:j.killed,halt:j.halt?'Daily loss limit hit':'',lock:j.lock,rate:j.rate,curve:j.curve,book:j.book});
-  S.orders=j.orders.map(o=>({id:o.id,t:hms(o.w),src:o.src,side:o.side,q:o.q,s:o.s,type:o.type,px:o.px||null,fp:o.fp||0,st:o.st,why:o.why}));
+  S.orders=j.orders.map(o=>({id:o.id,t:hms(o.w),src:o.src,side:o.side,q:o.q,s:o.s,type:o.type,px:o.px||null,fp:o.fp||0,st:o.st,why:o.why,code:o.code}));
   S.pos={};j.pos.forEach(p=>{S.pos[p.s]={q:p.q,avg:p.avg}});
   S.audit=j.audit.map(e=>({t:hms(e.w),k:e.k,m:e.m}));
   S.ledger=j.ledger.map(e=>({t:hms(e.w),k:e.k,a:e.a,b:e.b}));
@@ -462,7 +502,7 @@ async function initApi(){
     render();setInterval(poll,1000);setInterval(()=>{if(++tk%6===0)pushNews()},1000)}catch(e){}
 }
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-act],[data-sel],[data-cx],[data-st],[data-amt],[data-node]');if(!t)return;
+  const t=e.target.closest('[data-act],[data-sel],[data-cx],[data-st],[data-amt],[data-node],[data-open]');if(!t)return;
   const d=t.dataset;
   if(d.act)ACT[d.act]();
   else if(d.sel){S.sel=+d.sel;$('#tSym').value=I[S.sel].s;render();if(API)poll()}
@@ -470,11 +510,13 @@ document.addEventListener('click',e=>{
   else if(d.cx){const o=S.orders.find(x=>x.id===d.cx);if(o&&o.st==='ACKED'){o.st='CANCELLED';S.stamps.push(Date.now());log('CANCEL',o.id+' cancelled');render()}}
   else if(d.st){const x=STR[+d.st];x.on=!x.on;log('STRATEGY',x.n+(x.on?' enabled':' disabled')+' in SIM');render()}
   else if(d.amt){$('#fAmt').value=d.amt}
-  else if(d.node){C.pick=d.node;C.tab=0;renderWeb()}
+  else if(d.node!==undefined){C.pick=+d.node;renderWeb()}
+  else if(d.open){C.isin=d.open;C.pick=null;$('#cQ').value='';renderWeb()}
 });
 $('#tSym').innerHTML=I.map(i=>'<option>'+i.s+'</option>').join('');
-$('#cSym').innerHTML=['RELIANCE','HDFCBANK','TCS'].map(s=>'<option>'+s+'</option>').join('');
-$('#cSym').onchange=e=>{C.sym=e.target.value;C.pick=null;renderWeb()};
+const cSearch=()=>{const c=findCompany($('#cQ').value);if(c){C.isin=c[0];C.pick=null;renderWeb()}};
+$('#cQ').addEventListener('change',cSearch);$('#cQ').addEventListener('keydown',e=>{if(e.key==='Enter')cSearch()});
+loadConnector();
 function route(){const v=(location.hash||'#terminal').slice(1),ok=document.getElementById('v-'+v)?v:'terminal';document.querySelectorAll('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+ok));document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+ok))}
 const sp=$('#split'),cv=$('#v-connector');
 function setSplit(p){p=Math.min(75,Math.max(30,p));cv.style.setProperty('--split',p+'%');sp.setAttribute('aria-valuenow',Math.round(p))}
@@ -499,7 +541,7 @@ async function loadReports(){
 loadReports();
 log('SYSTEM','Preview started in SIMULATION mode with '+inr(START)+' demo funds');
 for(let k=0;k<4;k++)pushNews();
-C.pick='R1';renderWeb();render();timer=setInterval(tick,1000);initApi();
+render();timer=setInterval(tick,1000);initApi();
 </script>
 </body>
 </html>
