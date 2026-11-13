@@ -7,8 +7,13 @@
 #     and the adverse-media feed (NSE filings + GDELT), refreshed every 2 minutes
 set -euo pipefail
 cd "$(dirname "$0")/.."
-[ -x build/mc_server ] && [ -f web/reports/report.json ] || bash scripts/build_and_report.sh
+# build only if update.sh has not already built the current version
+if [ ! -x build/mc_server ] || [ ! -f web/reports/report.json ] || [ "$(git rev-parse HEAD)" != "$(cat build/.built_rev 2>/dev/null)" ]; then
+  bash scripts/build_and_report.sh
+fi
 mkdir -p logs
+# a restart or re-attach must not leave an old server holding the port
+pkill -f "build/mc_server" 2>/dev/null && sleep 1 || true
 python3 tools/fetch_latest.py --no-history > logs/fetch_latest.log 2>&1 \
   || echo "Could not fetch NSE closes (see logs/fetch_latest.log); the terminal will use labelled placeholder prices."
 today=$(TZ=Asia/Kolkata date +%F)

@@ -13,3 +13,4 @@ if [ ! -d "$DATA_DIR" ] || [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
 fi
 ./build/mc_backtest --data "$DATA_DIR" --out web/reports
 ./build/mc_bench web/reports/latency.json
+git rev-parse HEAD > build/.built_rev 2>/dev/null || true
