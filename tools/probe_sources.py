@@ -1,28 +1,45 @@
 #!/usr/bin/env python3
-"""Probe 5: related-party file columns and relationship values; announcement keys. Diagnostic only."""
-import collections, http.cookiejar, json, os, sys, urllib.request
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import xlsx_lite
+"""Probe 6: YouTube business-TV live channels (embeddable?), NSE corporate actions / shareholding / results. Diagnostic."""
+import http.cookiejar, json, re, sys, urllib.request
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-def get(url, ref="https://www.nseindia.com/", accept="*/*"):
-    with op.open(urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept, "Referer": ref}), timeout=180) as r:
-        return r.read()
-open("/tmp/rpt.xlsx", "wb").write(get("https://nsearchives.nseindia.com//web/mediaattachment/2026-05/Related_Party_Transactions_as_on_September_30_2025_20260513185352.xlsx"))
-it = xlsx_lite.rows("/tmp/rpt.xlsx")
-hdr = next(it)
-for i, h in enumerate(hdr): print(f"  col {i}: {h}")
-rel = collections.Counter(); nat = collections.Counter(); rel_rows = []
-for r in it:
-    r += [""] * (len(hdr) - len(r))
-    rel[r[27].strip()] += 1
-    if r[4] == "RELIANCE": rel_rows.append(r[23:34])
-print("relationship values (top 80):")
-for k, v in rel.most_common(80): print(f"  {v:7}  {k[:90]}")
-print("distinct relationship values:", len(rel))
-print("RELIANCE rows:", len(rel_rows))
-for x in rel_rows[:25]: print("  ", x)
+def get(url, ref="", accept="*/*", extra=None):
+    h = {"User-Agent": UA, "Accept": accept, "Accept-Language": "en-US,en;q=0.9"}
+    if ref: h["Referer"] = ref
+    h.update(extra or {})
+    with op.open(urllib.request.Request(url, headers=h), timeout=40) as r:
+        return r.status, r.read().decode("utf-8", "replace")
+HANDLES = ["CNBC-TV18", "cnbctv18", "ETNOW", "etnow", "ZeeBusiness", "zeebusiness", "NDTVProfitIndia", "ndtvprofit", "CNBCAwaaz", "cnbcawaaz",
+           "ETNowSwadesh", "BloombergTelevision", "markets", "CNBCtelevision", "CNBCInternational", "YahooFinance", "BusinessToday", "moneycontrol",
+           "economictimes", "BloombergQuint", "TimesNowNavbharat", "BusinessStandard", "livemint", "NDTVProfitHindi", "ZeeBusinessEnglish"]
+cons = {"CONSENT": "YES+cb", "SOCS": "CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg"}
+cookie = "; ".join(f"{k}={v}" for k, v in cons.items())
+for h in HANDLES:
+    try:
+        st, t = get(f"https://www.youtube.com/@{h}/live", extra={"Cookie": cookie})
+        title = (re.search(r"<title>(.*?)</title>", t) or [None, "?"])[1]
+        cid = (re.search(r'"externalId":"(UC[\w-]{22})"', t) or re.search(r'"channelId":"(UC[\w-]{22})"', t) or [None, ""])[1]
+        vid = (re.search(r'"videoDetails":\{"videoId":"([\w-]{11})"', t) or [None, ""])[1]
+        live = '"isLive":true' in t or '"isLiveContent":true' in t
+        emb = ""
+        if vid:
+            st2, e = get(f"https://www.youtube.com/embed/{vid}", extra={"Cookie": cookie})
+            ps = re.search(r'"playabilityStatus":\{"status":"(\w+)"(?:,"reason":"([^"]*)")?', e.replace('\\"', '"'))
+            emb = f"embed status={ps.group(1)} reason={ps.group(2)}" if ps else ("embed page has no playability field; " + ("errorScreen" if "errorScreen" in e else "ok?"))
+        print(f"@{h:22} {st} channel={cid} live_video={vid} live={live} | {title[:60]} | {emb}")
+    except Exception as ex:
+        print(f"@{h:22} FAIL {ex}")
+# NSE fundamentals feeds
 get("https://www.nseindia.com/static/regulations/listing-compliance")
-a = json.loads(get("https://www.nseindia.com/api/corporate-announcements?index=equities", ref="https://www.nseindia.com/companies-listing/corporate-filings-announcements", accept="application/json"))
-print("announcement keys:", sorted(a[0].keys()))
-print("desc values:", collections.Counter(x.get("desc") for x in a).most_common(20))
+for name, u, ref in [
+    ("corporate actions", "https://www.nseindia.com/api/corporates-corporateActions?index=equities&symbol=RELIANCE", "https://www.nseindia.com/companies-listing/corporate-filings-actions"),
+    ("shareholding", "https://www.nseindia.com/api/corporate-share-holdings-master?index=equities&symbol=RELIANCE", "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"),
+    ("results", "https://www.nseindia.com/api/corporates-financial-results?index=equities&symbol=RELIANCE&period=Quarterly", "https://www.nseindia.com/companies-listing/corporate-filings-financial-results"),
+    ("results-comparison", "https://www.nseindia.com/api/results-comparision?symbol=RELIANCE", "https://www.nseindia.com/companies-listing/corporate-filings-financial-results-comparision")]:
+    try:
+        st, t = get(u, ref, "application/json")
+        j = json.loads(t)
+        print(f"\n### {name}: {st} type={type(j).__name__} len={len(j) if hasattr(j,'__len__') else ''}")
+        print(json.dumps(j if not isinstance(j, list) else j[:3])[:1500])
+    except Exception as ex:
+        print(f"\n### {name}: FAIL {ex}")
