@@ -1,45 +1,38 @@
 #!/usr/bin/env python3
-"""Probe 6: YouTube business-TV live channels (embeddable?), NSE corporate actions / shareholding / results. Diagnostic."""
-import http.cookiejar, json, re, sys, urllib.request
-UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-def get(url, ref="", accept="*/*", extra=None):
-    h = {"User-Agent": UA, "Accept": accept, "Accept-Language": "en-US,en;q=0.9"}
-    if ref: h["Referer"] = ref
-    h.update(extra or {})
-    with op.open(urllib.request.Request(url, headers=h), timeout=40) as r:
-        return r.status, r.read().decode("utf-8", "replace")
-HANDLES = ["CNBC-TV18", "cnbctv18", "ETNOW", "etnow", "ZeeBusiness", "zeebusiness", "NDTVProfitIndia", "ndtvprofit", "CNBCAwaaz", "cnbcawaaz",
-           "ETNowSwadesh", "BloombergTelevision", "markets", "CNBCtelevision", "CNBCInternational", "YahooFinance", "BusinessToday", "moneycontrol",
-           "economictimes", "BloombergQuint", "TimesNowNavbharat", "BusinessStandard", "livemint", "NDTVProfitHindi", "ZeeBusinessEnglish"]
-cons = {"CONSENT": "YES+cb", "SOCS": "CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg"}
-cookie = "; ".join(f"{k}={v}" for k, v in cons.items())
-for h in HANDLES:
+"""Probe 7: XBRL contexts of a results filing; results API with a date range. Diagnostic only."""
+import datetime as dt, json, os, sys, urllib.request
+import xml.etree.ElementTree as ET
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nse_session import Nse, UA
+nse = Nse()
+today = dt.date.today()
+for q in ["", f"&from_date={(today - dt.timedelta(days=730)):%d-%m-%Y}&to_date={today:%d-%m-%Y}"]:
     try:
-        st, t = get(f"https://www.youtube.com/@{h}/live", extra={"Cookie": cookie})
-        title = (re.search(r"<title>(.*?)</title>", t) or [None, "?"])[1]
-        cid = (re.search(r'"externalId":"(UC[\w-]{22})"', t) or re.search(r'"channelId":"(UC[\w-]{22})"', t) or [None, ""])[1]
-        vid = (re.search(r'"videoDetails":\{"videoId":"([\w-]{11})"', t) or [None, ""])[1]
-        live = '"isLive":true' in t or '"isLiveContent":true' in t
-        emb = ""
-        if vid:
-            st2, e = get(f"https://www.youtube.com/embed/{vid}", extra={"Cookie": cookie})
-            ps = re.search(r'"playabilityStatus":\{"status":"(\w+)"(?:,"reason":"([^"]*)")?', e.replace('\\"', '"'))
-            emb = f"embed status={ps.group(1)} reason={ps.group(2)}" if ps else ("embed page has no playability field; " + ("errorScreen" if "errorScreen" in e else "ok?"))
-        print(f"@{h:22} {st} channel={cid} live_video={vid} live={live} | {title[:60]} | {emb}")
-    except Exception as ex:
-        print(f"@{h:22} FAIL {ex}")
-# NSE fundamentals feeds
-get("https://www.nseindia.com/static/regulations/listing-compliance")
-for name, u, ref in [
-    ("corporate actions", "https://www.nseindia.com/api/corporates-corporateActions?index=equities&symbol=RELIANCE", "https://www.nseindia.com/companies-listing/corporate-filings-actions"),
-    ("shareholding", "https://www.nseindia.com/api/corporate-share-holdings-master?index=equities&symbol=RELIANCE", "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"),
-    ("results", "https://www.nseindia.com/api/corporates-financial-results?index=equities&symbol=RELIANCE&period=Quarterly", "https://www.nseindia.com/companies-listing/corporate-filings-financial-results"),
-    ("results-comparison", "https://www.nseindia.com/api/results-comparision?symbol=RELIANCE", "https://www.nseindia.com/companies-listing/corporate-filings-financial-results-comparision")]:
-    try:
-        st, t = get(u, ref, "application/json")
-        j = json.loads(t)
-        print(f"\n### {name}: {st} type={type(j).__name__} len={len(j) if hasattr(j,'__len__') else ''}")
-        print(json.dumps(j if not isinstance(j, list) else j[:3])[:1500])
-    except Exception as ex:
-        print(f"\n### {name}: FAIL {ex}")
+        r = nse.get_json("https://www.nseindia.com/api/corporates-financial-results?index=equities&symbol=RELIANCE&period=Quarterly" + q,
+                         "https://www.nseindia.com/companies-listing/corporate-filings-financial-results") or []
+        tos = sorted({x.get("toDate") for x in r}, key=lambda s: dt.datetime.strptime(s, "%d-%b-%Y"))
+        print(f"results{' (date range)' if q else ''}: {len(r)} rows, period ends {tos[:2]} ... {tos[-3:]}")
+        print("  fields:", sorted(r[0].keys()) if r else None)
+        print("  cumulative values:", sorted({x.get('cumulative') for x in r}))
+    except Exception as e:
+        print("results error", e)
+url = "https://nsearchives.nseindia.com/corporate/xbrl/INDAS_117298_1348254_16012025082021.xml"
+for row in (r or []):
+    if row.get("toDate") == "31-Dec-2024" and row.get("consolidated") == "Consolidated":
+        url = row["xbrl"]; print("consolidated Q3 row:", {k: row.get(k) for k in ("fromDate", "toDate", "cumulative", "relatingTo", "xbrl")}); break
+with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=60) as f:
+    root = ET.fromstring(f.read())
+ctx = {}
+for c in root.iter():
+    if not c.tag.endswith("}context"): continue
+    sd = next((x.text for x in c.iter() if x.tag.endswith("}startDate")), None)
+    ed = next((x.text for x in c.iter() if x.tag.endswith("}endDate")), None)
+    inst = next((x.text for x in c.iter() if x.tag.endswith("}instant")), None)
+    dim = [x.text for x in c.iter() if x.tag.endswith("}explicitMember")]
+    ctx[c.get("id")] = (sd, ed, inst, dim)
+print("contexts:", len(ctx))
+for k, v in list(ctx.items())[:12]: print("  ", k, v)
+for el in root.iter():
+    n = el.tag.split("}")[-1]
+    if n in ("RevenueFromOperations", "ProfitLossForPeriod", "DateOfStartOfReportingPeriod", "DateOfEndOfReportingPeriod", "TypeOfReportingPeriod", "WhetherResultsAreConsolidatedOrStandalone"):
+        print(f"  {n:45} ctx={el.get('contextRef'):12} {ctx.get(el.get('contextRef'))} = {(el.text or '')[:40]}")
