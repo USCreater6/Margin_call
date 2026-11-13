@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
   std::vector<std::string> files;
   if (std::filesystem::exists(data))
     for (const auto& e : std::filesystem::directory_iterator(data))
-      if (e.path().extension() == ".csv") files.push_back(e.path().string());
+      if (e.path().extension() == ".csv" && e.path().filename().string()[0] != '_') files.push_back(e.path().string());
   std::sort(files.begin(), files.end());
   std::vector<Instrument> insts;
   std::ostringstream dq;
