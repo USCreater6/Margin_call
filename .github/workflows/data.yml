@@ -13,7 +13,7 @@ jobs:
       - name: Fetch NSE daily files
         run: |
           END="${{ inputs.end }}"; [ -n "$END" ] || END="$(date -u +%F)"
-          python3 tools/fetch_nse.py --start "${{ inputs.start }}" --end "$END" --out data/nse
+          python3 tools/fetch_nse.py --start "${{ inputs.start }}" --end "$END" --out data/nse --index nifty50 --auto-actions
       - name: Build, test, backtest on NSE data
         run: MC_DATA_DIR=data/nse bash scripts/build_and_report.sh
       - name: Upload SIMULATION report (derived results only, no raw exchange data)

@@ -67,7 +67,10 @@ inline BtResult run_backtest(const std::vector<Instrument>& insts, std::vector<S
   const std::size_t NI = insts.size(), NS = strats.size();
   BtResult R;
   R.strat_pnl.assign(NS, 0.0);
-  for (auto& s : strats) s.s->reset(NI);
+  std::vector<std::string> syms;
+  for (const auto& in : insts) syms.push_back(in.sym);
+  for (auto& s : strats) { s.s->reset(NI); s.s->set_universe(syms); }
+  std::vector<const Bar*> today_bars(NI, nullptr);
 
   std::vector<std::int32_t> dates;
   for (const auto& in : insts)
@@ -171,7 +174,9 @@ inline BtResult run_backtest(const std::vector<Instrument>& insts, std::vector<S
       const auto& bars = insts[i].bars;
       while (cur[i] < bars.size() && bars[cur[i]].date < today) ++cur[i];
       has[i] = cur[i] < bars.size() && bars[cur[i]].date == today;
+      today_bars[i] = has[i] ? &bars[cur[i]] : nullptr;
     }
+    for (auto& st : strats) st.s->on_day(today, today_bars);
     if (today < cfg.trade_from) {   // warm-up only: strategies see the bar, nothing trades
       for (std::size_t s = 0; s < NS; ++s)
         for (std::size_t i = 0; i < NI; ++i)

@@ -114,22 +114,66 @@ int main(int argc, char** argv) {
       first = false;
     }
 
-  std::printf("\n== SIMULATION == walk-forward (train 500 bars, test 125 bars)\n");
-  std::vector<ParamSet> mom, mr;
+  // ---- validation of every candidate strategy family ----
+  // Pass criteria were fixed before any of these were run (approved 14 Nov 2026):
+  //   1. out-of-sample (walk-forward) return > 0 with fees, spread and slippage all doubled
+  //   2. worst drawdown inside any out-of-sample period < 15%
+  //   3. at least 55% of out-of-sample periods positive (6 of 11 when there are 11)
+  std::printf("\n== SIMULATION == walk-forward validation (train 500 bars, test 125 bars), each family alone\n");
+  auto one = [](auto make) { return [make] { std::vector<StratSpec> v; v.push_back({make(), 1.0}); return v; }; };
+  struct Family { std::string name; std::vector<ParamSet> ps; };
+  std::vector<Family> fams(6);
+  fams[0].name = "momentum"; fams[1].name = "momentum+regime";
   for (int f : {5, 10, 20})
-    for (int s : {50, 100}) {
-      const std::string lb = "fast=" + std::to_string(f) + ",slow=" + std::to_string(s);
-      mom.push_back({lb, [f, s] { std::vector<StratSpec> v; v.push_back({std::make_unique<Momentum>(f, s, 60), 1.0}); return v; }});
+    for (int sl : {50, 100}) {
+      const std::string lb = "fast=" + std::to_string(f) + ",slow=" + std::to_string(sl);
+      fams[0].ps.push_back({lb, one([f, sl] { return std::make_unique<Momentum>(f, sl, 60, false); })});
+      fams[1].ps.push_back({lb, one([f, sl] { return std::make_unique<Momentum>(f, sl, 60, true); })});
     }
+  fams[2].name = "rotation"; fams[3].name = "rotation+regime";
+  for (int lbk : {63, 126, 189})
+    for (int rb : {5, 10}) {
+      const std::string lb = "lookback=" + std::to_string(lbk) + ",rebal=" + std::to_string(rb) + ",top=3";
+      fams[2].ps.push_back({lb, one([lbk, rb] { return std::make_unique<Rotation>(lbk, 3, rb, false); })});
+      fams[3].ps.push_back({lb, one([lbk, rb] { return std::make_unique<Rotation>(lbk, 3, rb, true); })});
+    }
+  fams[4].name = "meanrev"; fams[5].name = "meanrev-uptrend";
   for (int w : {10, 20})
     for (double z : {1.5, 2.0, 2.5}) {
       const std::string lb = "window=" + std::to_string(w) + ",z=" + std::to_string(z).substr(0, 3);
-      mr.push_back({lb, [w, z] { std::vector<StratSpec> v; v.push_back({std::make_unique<MeanReversion>(w, z, 10), 1.0}); return v; }});
+      fams[4].ps.push_back({lb, one([w, z] { return std::make_unique<MeanReversion>(w, z, 10, false); })});
+      fams[5].ps.push_back({lb, one([w, z] { return std::make_unique<MeanReversion>(w, z, 10, true); })});
     }
-  const WfResult wm = walk_forward(insts, mom, cfg, 500, 125, 120);
-  const WfResult wr = walk_forward(insts, mr, cfg, 500, 125, 120);
-  std::printf("%-28s OOS ret %+8.2f%%  worst fold DD %6.2f%%  trades %4d  folds %zu\n", "momentum", wm.oos_ret * 100, wm.worst_dd * 100, wm.oos_trades, wm.folds.size());
-  std::printf("%-28s OOS ret %+8.2f%%  worst fold DD %6.2f%%  trades %4d  folds %zu\n", "mean reversion", wr.oos_ret * 100, wr.worst_dd * 100, wr.oos_trades, wr.folds.size());
+  bool has_proxy = false;
+  for (const auto& in : insts) has_proxy = has_proxy || in.sym == "NIFTYBEES";
+  if (!has_proxy) std::printf("NOTE: NIFTYBEES is not in the data, so the +regime filters are INACTIVE in this run.\n");
+  BtConfig cfg2 = cfg;
+  cfg2.ex.fee_bps *= 2; cfg2.ex.slippage_ticks *= 2; cfg2.ex.half_spread_ticks *= 2;
+  std::ostringstream cand;
+  int n_pass = 0;
+  std::printf("%-18s %10s %10s %10s %9s %7s  %s\n", "family", "OOS ret", "OOS 2xcost", "worst DD", "pos folds", "trades", "verdict");
+  for (std::size_t k = 0; k < fams.size(); ++k) {
+    const WfResult w1 = walk_forward(insts, fams[k].ps, cfg, 500, 125, 260);
+    const WfResult w2 = walk_forward(insts, fams[k].ps, cfg2, 500, 125, 260);
+    int pos = 0;
+    for (const auto& f : w2.folds) pos += f.test_ret > 0;
+    const std::size_t nf = w2.folds.size();
+    const bool c1 = w2.oos_ret > 0, c2 = w2.worst_dd < 0.15, c3 = nf > 0 && pos * 100 >= static_cast<int>(nf) * 55;
+    const bool regime_family = fams[k].name.find("regime") != std::string::npos;
+    const bool pass = c1 && c2 && c3 && (!regime_family || has_proxy);
+    n_pass += pass;
+    std::printf("%-18s %+9.2f%% %+9.2f%% %9.2f%% %5d/%-3zu %7d  %s%s%s%s\n", fams[k].name.c_str(), w1.oos_ret * 100, w2.oos_ret * 100, w2.worst_dd * 100,
+                pos, nf, w2.oos_trades, pass ? "PASS" : "FAIL", c1 ? "" : " [loses at 2x cost]", c2 ? "" : " [drawdown >= 15%]", c3 ? "" : " [too few positive periods]");
+    cand << (k ? "," : "") << "{\"family\":\"" << fams[k].name << "\",\"oos_ret\":" << w1.oos_ret << ",\"oos_ret_2x\":" << w2.oos_ret
+         << ",\"worst_dd_2x\":" << w2.worst_dd << ",\"pos_folds\":" << pos << ",\"folds\":" << nf << ",\"trades_2x\":" << w2.oos_trades
+         << ",\"pass\":" << (pass ? "true" : "false") << ",\"c_cost\":" << (c1 ? "true" : "false") << ",\"c_dd\":" << (c2 ? "true" : "false")
+         << ",\"c_folds\":" << (c3 ? "true" : "false") << ",\"filter_active\":" << ((!regime_family || has_proxy) ? "true" : "false")
+         << ",\"wf\":" << wf_json(fams[k].name.c_str(), w2) << "}";
+  }
+  std::printf("%d of %zu families pass.%s\n", n_pass, fams.size(),
+              any_synth ? " Input is SYNTHETIC: this only tests the engine." : " Universe is today's index members (survivorship bias: companies that left the index are missing).");
+  const WfResult wm = walk_forward(insts, fams[0].ps, cfg, 500, 125, 260);
+  const WfResult wr = walk_forward(insts, fams[4].ps, cfg, 500, 125, 260);
 
   std::ofstream o(out + "/report.json");
   o.precision(8);
@@ -150,7 +194,7 @@ int main(int argc, char** argv) {
   const std::size_t step = std::max<std::size_t>(1, R.equity.size() / 400);
   for (std::size_t i = 0; i < R.equity.size(); i += step) o << (i ? "," : "") << "[" << R.dates[i] << "," << R.equity[i] << "]";
   o << "]},\n\"per_instrument\":[" << per.str() << "],\n\"sensitivity\":[" << sens.str() << "],\n\"walk_forward\":["
-    << wf_json("momentum", wm) << "," << wf_json("mean_reversion", wr) << "]\n}\n";
+    << wf_json("momentum", wm) << "," << wf_json("mean_reversion", wr) << "],\n\"criteria\":\"OOS return > 0 at 2x costs; worst OOS-period drawdown < 15%; >= 55% of OOS periods positive\",\n\"candidates\":[" << cand.str() << "]\n}\n";
   std::printf("\nreport: %s/report.json   audit trail: %s/audit.jsonl\n", out.c_str(), out.c_str());
   if (R.oversell || R.osm_errors) { std::fprintf(stderr, "INTEGRITY FAILURE: oversell=%d osm_errors=%d\n", R.oversell, R.osm_errors); return 1; }
   return 0;

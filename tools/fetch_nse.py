@@ -9,7 +9,7 @@ Prices are back-adjusted for the splits and bonuses listed in tools/corporate_ac
 Dividends are NOT adjusted. Adjustments are logged to _adjustments.csv for checking.
 Exit codes: 0 ok, 3 archive unreachable or blocked, 4 file format not as expected.
 """
-import argparse, csv, datetime as dt, io, os, sys, time, urllib.error, urllib.request, zipfile
+import argparse, csv, datetime as dt, io, os, re, sys, time, urllib.error, urllib.request, zipfile
 
 UDIFF = "https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{ymd}_F_0000.csv.zip"
 LEGACY = "https://nsearchives.nseindia.com/content/historical/EQUITIES/{yyyy}/{mon}/cm{dd}{mon}{yyyy}bhav.csv.zip"
@@ -41,15 +41,65 @@ def fetch(url):
         return None, -1
 
 
+BONUS = re.compile(r"bonus\s*(\d+)\s*:\s*(\d+)", re.I)
+SPLIT = re.compile(r"(?:split|sub-?division).*?from\s*(?:rs|re)\.?\s*([\d.]+).*?to\s*(?:rs|re)\.?\s*([\d.]+)", re.I)
+
+
+def auto_actions(rows, start, end):
+    """Splits and bonuses from NSE's corporate-actions feed, applied only if the price series confirms them:
+    the ex-date open must be within 20% of previous close / factor. Everything is logged."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from nse_session import Nse
+    nse, out = Nse(), []
+    url = "https://www.nseindia.com/api/corporates-corporateActions?index=equities&symbol={s}&from_date={f}&to_date={t}"
+    for sym in sorted(s for s, r in rows.items() if r):
+        try:
+            data = nse.get_json(url.format(s=urllib.request.quote(sym), f=start.strftime("%d-%m-%Y"), t=end.strftime("%d-%m-%Y")),
+                                referer="https://www.nseindia.com/companies-listing/corporate-filings-actions")
+        except Exception as e:
+            print(f"  corporate actions {sym}: unavailable ({e})"); continue
+        by_date = {r[0]: r for r in rows[sym]}
+        dates = sorted(by_date)
+        for x in data or []:
+            subj = (x.get("subject") or "").strip()
+            fac = None
+            m = BONUS.search(subj)
+            if m: fac = (int(m.group(1)) + int(m.group(2))) / int(m.group(2))
+            m = SPLIT.search(subj)
+            if m and float(m.group(2)) > 0: fac = float(m.group(1)) / float(m.group(2))
+            if not fac or fac <= 1: continue
+            try: ex = dt.datetime.strptime(x.get("exDate", ""), "%d-%b-%Y").date()
+            except ValueError: continue
+            if ex not in by_date:
+                print(f"  {sym} {ex} '{subj}': ex-date not in the price data, not applied"); continue
+            i = dates.index(ex)
+            if i == 0: continue
+            prev_c, op = by_date[dates[i - 1]][4], by_date[ex][1]
+            implied = prev_c / op if op > 0 else 0
+            ok = abs(implied / fac - 1) < 0.20
+            print(f"  {sym} {ex} '{subj}': factor {fac:g}, price jump implies {implied:.3f} -> {'APPLIED' if ok else 'NOT CONFIRMED, not applied'}")
+            if ok: out.append((sym, ex, fac))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", required=True); ap.add_argument("--end", required=True)
     ap.add_argument("--out", default="data/nse"); ap.add_argument("--symbols", default=DEFAULT_SYMBOLS)
     ap.add_argument("--cache", default=".cache/nse"); ap.add_argument("--delay", type=float, default=0.35)
     ap.add_argument("--gap", type=float, default=0.20, help="report open-vs-previous-close moves larger than this")
+    ap.add_argument("--index", default="", help="add every member of an NSE index list, e.g. nifty50")
+    ap.add_argument("--auto-actions", action="store_true", help="also read splits/bonuses from NSE's corporate-actions feed (applied only when the price data confirms them)")
     a = ap.parse_args()
     start, end = dt.date.fromisoformat(a.start), dt.date.fromisoformat(a.end)
     want = set(s.strip().upper() for s in a.symbols.split(",") if s.strip())
+    if a.index:
+        blob, st = fetch(f"https://nsearchives.nseindia.com/content/indices/ind_{a.index}list.csv")
+        if st != 200:
+            print(f"index list {a.index} unavailable (HTTP {st})"); sys.exit(3)
+        members = [r["Symbol"].strip() for r in csv.DictReader(io.StringIO(blob.decode("utf-8", "replace")))]
+        want |= set(members)
+        print(f"index {a.index}: {len(members)} members added; {len(want)} symbols in total")
     os.makedirs(a.out, exist_ok=True); os.makedirs(a.cache, exist_ok=True)
     rows = {s: [] for s in want}
     ok = missing = failed = 0
@@ -98,10 +148,14 @@ def main():
     adj_log = []
     gap_log = []
     actions = []
+    if a.auto_actions:
+        actions += auto_actions(rows, start, end)
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "corporate_actions.csv")) as f:
         for row in csv.DictReader(l for l in f if not l.startswith("#")):
-            actions.append((row["symbol"].strip(), dt.date.fromisoformat(row["ex_date"].strip()), float(row["factor"])))
+            key = (row["symbol"].strip(), dt.date.fromisoformat(row["ex_date"].strip()))
+            if not any((x[0], x[1]) == key for x in actions):   # an automatic, price-confirmed entry wins over nothing; manual entries add
+                actions.append((key[0], key[1], float(row["factor"])))
     for s, rs in sorted(rows.items()):
         if not rs:
             print(f"{s}: no rows (symbol not found in EQ series)"); continue

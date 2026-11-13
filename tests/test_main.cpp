@@ -1,5 +1,6 @@
 // Test suite. Plain asserts with a tiny harness so there are no external dependencies.
 #include <cstdio>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -491,6 +492,73 @@ static void test_session_soak() {   // long random run: accounting must stay con
   CHECK(j.front() == '{' && j.back() == '}' && j.find("\"engine\":\"cpp\"") != std::string::npos);
 }
 
+static Instrument trend_inst(const char* sym, double start, double daily, int n, std::uint64_t seed) {
+  Rng rng(seed);
+  Instrument in; in.sym = sym;
+  double c = start;
+  for (int i = 0; i < n; ++i) {
+    const double o = c;
+    c = o * (1 + daily + (rng.uni() - 0.5) * 0.004);
+    Bar b; b.date = 20200101 + i;
+    b.o = static_cast<Price>(o * 100); b.c = static_cast<Price>(c * 100);
+    b.h = std::max(b.o, b.c) + 10; b.l = std::min(b.o, b.c) - 10; b.vol = 1000000;
+    in.bars.push_back(b);
+  }
+  return in;
+}
+static void test_regime_filter() {
+  // Index proxy falling for the whole period: momentum+regime must never buy; plain momentum may.
+  std::vector<Instrument> d{trend_inst("NIFTYBEES", 200, -0.002, 400, 1), trend_inst("UPCO", 100, 0.003, 400, 2)};
+  BtConfig cfg; cfg.per_trade = 0.2;
+  { std::vector<StratSpec> st; st.push_back({std::make_unique<Momentum>(5, 20, 60, true), 1.0});
+    const BtResult r = run_backtest(d, st, cfg);
+    CHECK(r.orders == 0 && r.trades == 0); }
+  { std::vector<StratSpec> st; st.push_back({std::make_unique<Momentum>(5, 20, 60, false), 1.0});
+    const BtResult r = run_backtest(d, st, cfg);
+    CHECK(r.orders > 0); }
+  // Index proxy rising: the filter turns on after 200 bars and trades happen; the proxy itself is never bought.
+  std::vector<Instrument> u{trend_inst("NIFTYBEES", 200, 0.002, 400, 3), trend_inst("UPCO", 100, 0.003, 400, 4)};
+  { std::vector<StratSpec> st; st.push_back({std::make_unique<Momentum>(5, 20, 400, true), 1.0});
+    BtConfig c2 = cfg; c2.audit_path = "/tmp/mc_regime_audit.jsonl";
+    const BtResult r = run_backtest(u, st, c2);
+    CHECK(r.orders > 0);
+    std::ifstream a("/tmp/mc_regime_audit.jsonl"); std::string line; bool proxy_traded = false;
+    while (std::getline(a, line)) proxy_traded = proxy_traded || (line.find("\"ORDER\"") != std::string::npos && line.find("NIFTYBEES") != std::string::npos);
+    CHECK(!proxy_traded); }
+}
+static void test_rotation() {
+  // Four stocks with different trends: rotation must hold the two strongest risers, never the faller or the proxy.
+  std::vector<Instrument> d{trend_inst("NIFTYBEES", 200, 0.001, 300, 5), trend_inst("FAST", 100, 0.004, 300, 6),
+                            trend_inst("MID", 100, 0.002, 300, 7), trend_inst("SLOW", 100, 0.0005, 300, 8),
+                            trend_inst("DOWN", 100, -0.002, 300, 9)};
+  std::vector<StratSpec> st; st.push_back({std::make_unique<Rotation>(60, 2, 5, true), 1.0});
+  BtConfig cfg; cfg.per_trade = 0.25; cfg.audit_path = "/tmp/mc_rot_audit.jsonl";
+  const BtResult r = run_backtest(d, st, cfg);
+  CHECK(r.orders > 0 && r.oversell == 0 && r.osm_errors == 0);
+  std::ifstream a("/tmp/mc_rot_audit.jsonl"); std::string line; int fast = 0, mid = 0, bad = 0;
+  while (std::getline(a, line)) {
+    if (line.find("\"ORDER\"") == std::string::npos || line.find("\"BUY\"") == std::string::npos) continue;
+    fast += line.find("\"FAST\"") != std::string::npos; mid += line.find("\"MID\"") != std::string::npos;
+    bad += line.find("\"DOWN\"") != std::string::npos || line.find("\"NIFTYBEES\"") != std::string::npos;
+  }
+  CHECK(fast >= 1 && mid >= 1 && bad == 0);
+  // Same data, regime filter on but proxy falling: nothing is held.
+  d[0] = trend_inst("NIFTYBEES", 200, -0.002, 300, 10);
+  std::vector<StratSpec> st2; st2.push_back({std::make_unique<Rotation>(60, 2, 5, true), 1.0});
+  BtConfig c2; c2.per_trade = 0.25;
+  CHECK(run_backtest(d, st2, c2).orders == 0);
+}
+static void test_meanrev_uptrend() {
+  // A steadily falling stock: plain mean reversion buys dips; the uptrend-only version never does.
+  std::vector<Instrument> d{trend_inst("FALL", 100, -0.0015, 500, 11)};
+  for (auto& b : d[0].bars) if ((b.date % 7) == 0) { b.c = b.c * 96 / 100; b.l = std::min(b.l, b.c) - 10; }   // regular dips
+  BtConfig cfg;
+  std::vector<StratSpec> a; a.push_back({std::make_unique<MeanReversion>(10, 1.5, 8, false), 1.0});
+  std::vector<StratSpec> b; b.push_back({std::make_unique<MeanReversion>(10, 1.5, 8, true), 1.0});
+  CHECK(run_backtest(d, a, cfg).orders > 0);
+  CHECK(run_backtest(d, b, cfg).orders == 0);
+}
+
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -504,6 +572,8 @@ int main() {
       {"session: resting order filled at its limit", test_session_resting_fill_and_priority},
       {"session: rate cap, stop, halt, kill, funding", test_session_risk_controls}, {"session: 5000-tick soak", test_session_soak},
       {"session: long-only, open orders, cash, average fill", test_session_long_only_and_cash},
+      {"strategy: index regime filter", test_regime_filter}, {"strategy: rotation", test_rotation},
+      {"strategy: mean reversion uptrend-only", test_meanrev_uptrend},
   };
   int failed_tests = 0;
   for (const T& t : tests) {
