@@ -83,7 +83,12 @@ header select{width:auto;font-size:12px}
 .big{font-family:var(--mono);font-size:21px;font-weight:500}
 .video{flex:none;width:100%;aspect-ratio:16/9;max-height:52vh;border-bottom:1px solid var(--line);background:var(--row);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px;text-align:center;font-size:12px;color:var(--mute)}
 .tvbar{display:flex;gap:6px;align-items:center;padding:4px 8px;border-bottom:1px solid var(--line);flex:none}
-.tvbar select{flex:1;width:auto}
+.tvbar select{flex:1;width:auto;min-width:0}
+.tvbar .btn{flex:none;white-space:nowrap}
+.fundg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:8px}
+.fundg>div{min-width:0;overflow-x:auto}
+.fundg .wide{grid-column:1/-1}
+.fundg td{white-space:normal}
 .video iframe{width:100%;height:100%;border:0;display:block}
 .video.on{padding:0;background:#000}
 .video .play{width:36px;height:36px;border-radius:50%;border:2px solid var(--mute);flex:none;position:relative}
@@ -490,14 +495,14 @@ async function fund(sym){
 const words=t=>t.replace(/([a-z])([A-Z])/g,'$1 $2');
 function fundHtml(f,sym){
   const box=(t,b)=>'<div><div class="colh" style="padding:0 0 3px">'+t+'</div>'+b+'</div>';
-  if(!f)return'<div class="g3">'+box('Financials','<div class="empty">'+(sym?'Not fetched for '+H(sym)+' yet. Fundamentals are fetched in the background for NIFTY 500 companies, NIFTY 50 first.':'BSE-only company: no NSE fundamentals.')+'</div>')+box('Corporate actions','')+box('Shareholding','')+'</div>';
+  if(!f)return'<div class="fundg"><div class="wide">'+box('Financials','<div class="empty">'+(sym?'Not fetched for '+H(sym)+' yet. Fundamentals are fetched in the background for NIFTY 500 companies, NIFTY 50 first.':'BSE-only company: no NSE fundamentals.')+'</div>')+'</div>'+box('Corporate actions','')+box('Shareholding','')+'</div>';
   const fg=f.figures,v=fg&&fg.values||{},keys=Object.keys(v);
   const fin=keys.length?'<table><tr><th>XBRL element</th><th>₹ crore</th></tr>'+keys.map(k=>'<tr><td title="'+H(k)+'">'+H(words(k))+'</td><td>'+(v[k].unit&&/INR/i.test(v[k].unit)&&!/PerShare/i.test(k)?(v[k].v/1e7).toLocaleString('en-IN',{maximumFractionDigits:2}):v[k].v.toLocaleString('en-IN')+' '+H(v[k].unit))+'</td></tr>').join('')+'</table><p class="note">'+H(fg.basis)+' · '+H(fg.period)+' · <a href="'+H(fg.source)+'" target="_blank" rel="noopener noreferrer">XBRL filing</a></p>'
     :'<div class="empty">No figures read from the latest XBRL filing.</div>';
   const res=(f.results||[]).slice(0,6).map(r=>'<tr><td>'+H(r.to)+'</td><td>'+H((r.basis||'').replace('Non-Consolidated','Standalone'))+'</td><td>'+H(r.audited)+'</td><td>'+(r.xbrl?'<a href="'+H(r.xbrl)+'" target="_blank" rel="noopener noreferrer">XBRL</a>':'')+'</td></tr>').join('');
   const ca=(f.actions||[]).slice(0,10).map(a=>'<tr><td>'+H(a.ex)+'</td><td class="w">'+H(a.subject)+'</td></tr>').join('');
   const sh=(f.shareholding||[]).slice(0,8).map(x=>'<tr><td>'+H(x.date)+'</td><td>'+H(x.promoter)+'%</td><td>'+H(x.public)+'%</td></tr>').join('');
-  return'<div class="g3">'+box('Financials',fin+(res?'<table style="margin-top:4px"><tr><th>Quarter to</th><th>Basis</th><th>Audit</th><th></th></tr>'+res+'</table>':''))
+  return'<div class="fundg"><div class="wide">'+box('Financials',fin+(res?'<table style="margin-top:4px"><tr><th>Quarter to</th><th>Basis</th><th>Audit</th><th></th></tr>'+res+'</table>':''))+'</div>'
     +box('Corporate actions',ca?'<table><tr><th>Ex-date</th><th style="text-align:left">Action</th></tr>'+ca+'</table>':'<div class="empty">None listed.</div>')
     +box('Shareholding',sh?'<table><tr><th>Quarter</th><th>Promoter</th><th>Public</th></tr>'+sh+'</table>':'<div class="empty">None listed.</div>')+'</div>'
     +'<p class="note">Source: NSE filings, fetched '+H((f.asof||'').slice(0,10))+(f.errors&&f.errors.length?' · <span class="dn">'+H(f.errors.join('; '))+'</span>':'')+'</p>';
