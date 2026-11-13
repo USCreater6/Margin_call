@@ -6,6 +6,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DMC_WERROR=ON
 cmake --build build -j"$(nproc)"
 ./build/mc_tests
 DATA_DIR="${MC_DATA_DIR:-data/synthetic}"
+if [ -z "${MC_DATA_DIR:-}" ] && ls data/nse/*.csv >/dev/null 2>&1; then DATA_DIR=data/nse; fi
 if [ ! -d "$DATA_DIR" ] || [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
   ./build/mc_gensynth data/synthetic 42
   DATA_DIR=data/synthetic

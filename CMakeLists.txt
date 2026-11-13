@@ -20,7 +20,7 @@ if(MC_SANITIZE)
   target_link_options(mc INTERFACE -fsanitize=address,undefined)
 endif()
 
-foreach(app backtest gensynth bench)
+foreach(app backtest gensynth bench server)
   add_executable(mc_${app} apps/${app}.cpp)
   target_link_libraries(mc_${app} PRIVATE mc)
 endforeach()

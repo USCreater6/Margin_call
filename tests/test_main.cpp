@@ -9,6 +9,7 @@
 #include "mc/osm.hpp"
 #include "mc/replay.hpp"
 #include "mc/risk.hpp"
+#include "mc/session.hpp"
 
 using namespace mc;
 
@@ -370,6 +371,97 @@ static void test_latency() {
   CHECK(s.n == 1000 && s.p50 == 501 && s.p99 == 991 && s.max == 1000 && s.p999 == 1000);
 }
 
+static LiveSim make_sim() {
+  LiveSim s(100000.0, RiskLimits{}, 7);
+  s.add_instrument("AAA", "TEST", 100000, 10);   // 1000.00, tick 0.10
+  s.add_instrument("BBB", "TEST", 50000, 10);
+  return s;
+}
+static void test_session_orders() {
+  LiveSim s = make_sim();
+  const Ts sec = 1000000000LL;
+  CHECK(s.best_ask(0) == 100010 && s.best_bid(0) == 99990);
+  CHECK(s.submit(0, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 0).empty());      // market buy fills at the best ask
+  CHECK(s.position(0).qty == 1); NEAR(s.position(0).avg, 1000.10);
+  CHECK(s.orders().back().o.st == State::Filled && s.live_orders() == 0);
+  NEAR(s.cash(), 100000 - 1000.10 - 1000.10 * 3.0 / 1e4);                         // price plus fee
+  CHECK(!s.submit(0, Side::Buy, OrdType::Market, 30, 0, "MANUAL", sec).empty());  // 30 x 1000 > 25% of equity
+  CHECK(s.orders().back().o.st == State::RejectedRisk && s.position(0).qty == 1);
+  CHECK(!s.submit(0, Side::Buy, OrdType::Limit, 1, 99995, "MANUAL", sec).empty()); // off-tick price
+  CHECK(s.submit(0, Side::Buy, OrdType::Limit, 2, 99000, "MANUAL", sec).empty()); // rests below the market
+  CHECK(s.live_orders() == 1 && s.orders().back().o.st == State::Acked && s.position(0).qty == 1);
+  CHECK(!s.submit(0, Side::Sell, OrdType::Limit, 1, 99000, "MANUAL", sec).empty()); // would match own resting buy
+  CHECK(!s.submit(0, Side::Sell, OrdType::Market, 1, 0, "MANUAL", sec).empty());
+  CHECK(s.cancel(s.orders().size() - 2, sec) && s.live_orders() == 0);
+  CHECK(!s.cancel(999, sec) && !s.cancel(1, sec));                                 // unknown, already filled
+  CHECK(s.submit(0, Side::Sell, OrdType::Market, 1, 0, "MANUAL", 2 * sec).empty()); // sells at the best bid
+  CHECK(s.position(0).qty == 0);
+  NEAR(s.equity(), s.cash());                                                      // flat: equity is cash
+  CHECK(s.equity() < 100000);                                                      // paid spread and fees
+}
+static void test_session_resting_fill_and_priority() {
+  LiveSim s = make_sim();
+  CHECK(s.submit(0, Side::Buy, OrdType::Limit, 3, 99980, "MANUAL", 0).empty());   // rests at 999.80
+  s.set_price(0, 99950); s.step(1000000000LL, false);                              // market drops through it
+  CHECK(s.position(0).qty == 3); NEAR(s.position(0).avg, 999.80);                  // filled at its own limit price
+  CHECK(s.live_orders() == 0);
+}
+static void test_session_risk_controls() {
+  const Ts sec = 1000000000LL;
+  { LiveSim s = make_sim();                                                         // rate cap: 8 per second
+    int okc = 0;
+    for (int i = 0; i < 12; ++i) okc += s.submit(1, Side::Buy, OrdType::Limit, 1, 40000 + 10 * i, "MANUAL", 0).empty();
+    CHECK(okc == 6);                                                               // max 6 open orders comes first
+  }
+  { LiveSim s = make_sim();
+    int okc = 0;
+    for (int i = 0; i < 12; ++i) { okc += s.submit(1, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 0).empty(); }
+    CHECK(okc == 8 && s.position(1).qty == 8);                                     // 9th in the same instant is vetoed
+  }
+  { LiveSim s = make_sim();                                                         // 2% per-trade stop
+    s.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 0);
+    s.set_price(0, 97900); s.step(sec, false);                                     // -2.1%
+    CHECK(s.position(0).qty == 0 && !s.halted());
+    bool saw = false; for (const auto& e : s.events()) saw = saw || e.k == "STOP";
+    CHECK(saw);
+    CHECK(s.equity() < 100000 && s.equity() > 99700);                              // lost about 2% of a 10% position
+  }
+  { LiveSim s = make_sim();                                                         // gap: stop cannot save it, daily halt fires
+    s.submit(0, Side::Buy, OrdType::Market, 24, 0, "MANUAL", 0);
+    s.set_price(0, 80000); s.step(sec, false);                                     // -20% gap on a 24% position
+    CHECK(s.position(0).qty == 0 && s.halted());
+    CHECK(!s.submit(1, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 2 * sec).empty());
+    s.rearm();
+    CHECK(!s.halted() && s.submit(1, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 3 * sec).empty());
+  }
+  { LiveSim s = make_sim();                                                         // kill switch and flatten
+    s.submit(0, Side::Buy, OrdType::Market, 2, 0, "MANUAL", 0);
+    s.submit(1, Side::Buy, OrdType::Limit, 1, 40000, "MANUAL", 0);
+    s.kill(true, sec);
+    CHECK(s.killed() && s.position(0).qty == 0 && s.live_orders() == 0);
+    CHECK(!s.submit(0, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 2 * sec).empty());
+    s.rearm(); CHECK(!s.killed());
+  }
+  { LiveSim s = make_sim();                                                         // funding is not profit
+    CHECK(s.fund(50000) && !s.fund(0) && !s.fund(-5));
+    NEAR(s.equity(), 150000.0); NEAR(s.base(), 150000.0);
+    s.step(sec, false); CHECK(!s.locked());                                        // a deposit must not trip the profit lockout
+    s.reset(); NEAR(s.equity(), 100000.0); CHECK(s.orders().empty());
+  }
+}
+static void test_session_soak() {   // long random run: accounting must stay consistent
+  LiveSim s = make_sim();
+  s.set_stub(true);
+  for (int i = 1; i <= 5000; ++i) s.step(static_cast<Ts>(i) * 1000000000LL);
+  double fees = 0;
+  int bad = 0;
+  for (const auto& r : s.orders()) { bad += r.o.filled > r.o.qty; (void)fees; }
+  CHECK(bad == 0);
+  CHECK(std::isfinite(s.equity()) && s.equity() > 0);
+  const std::string j = s.state_json(0, 5001LL * 1000000000LL);
+  CHECK(j.front() == '{' && j.back() == '}' && j.find("\"engine\":\"cpp\"") != std::string::npos);
+}
+
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -379,7 +471,9 @@ int main() {
       {"risk engine", test_risk}, {"portfolio and PnL", test_portfolio}, {"demo exchange fill model", test_exchange},
       {"data loader quality checks", test_replay}, {"backtest: determinism, costs, rejects", test_backtest},
       {"backtest: stop-loss and daily halt", test_backtest_stops_and_halt}, {"walk-forward", test_walk_forward},
-      {"latency recorder", test_latency},
+      {"latency recorder", test_latency}, {"session: orders through risk and matching", test_session_orders},
+      {"session: resting order filled at its limit", test_session_resting_fill_and_priority},
+      {"session: rate cap, stop, halt, kill, funding", test_session_risk_controls}, {"session: 5000-tick soak", test_session_soak},
   };
   int failed_tests = 0;
   for (const T& t : tests) {

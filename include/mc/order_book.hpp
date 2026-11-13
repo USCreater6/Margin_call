@@ -36,6 +36,12 @@ class OrderBook {
     if (s == Side::Buy) { auto it = bids_.find(px); return it == bids_.end() ? 0 : it->second.total; }
     auto it = asks_.find(px); return it == asks_.end() ? 0 : it->second.total;
   }
+  // Visits the best `n` price levels of one side: f(price, total_qty).
+  template <class F>
+  void levels(Side s, int n, F&& f) const {
+    if (s == Side::Buy) { for (auto it = bids_.begin(); it != bids_.end() && n-- > 0; ++it) f(it->first, it->second.total); }
+    else { for (auto it = asks_.begin(); it != asks_.end() && n-- > 0; ++it) f(it->first, it->second.total); }
+  }
   void clear() {
     pool_.clear(); free_.clear(); idx_.clear(); bids_.clear(); asks_.clear();
   }

@@ -3,7 +3,7 @@
 Private systematic-trading research platform. **Everything in this repository is SIMULATION.**
 There is no broker connection, no live market data and no real order path.
 
-## What is built (Stage 1, increment 1)
+## What is built (Stage 1)
 
 | Part | Where | State |
 |---|---|---|
@@ -16,12 +16,17 @@ There is no broker connection, no live market data and no real order path.
 | Strategies: momentum, mean reversion (long-only, daily bars) | `include/mc/strategy.hpp` | built |
 | Backtest engine, cost sensitivity, walk-forward | `include/mc/backtest.hpp`, `apps/backtest.cpp` | built, tested |
 | Latency benchmark for the matching engine | `apps/bench.cpp` | built |
+| Live simulation session: terminal orders go through the same risk engine and matching engine | `include/mc/session.hpp` | built, tested |
+| Terminal server (static files + JSON API, localhost only by default) | `apps/server.cpp` | built, smoke-tested in CI |
+| NSE daily-data fetcher with split/bonus back-adjustment | `tools/fetch_nse.py` | built, run on GitHub |
 | Web terminal | `web/index.html` | built, see limits below |
 
 ## What is not built yet
 
-- **Real market data.** The only data so far is SYNTHETIC (`mc_gensynth`). Results on it test the engine and say nothing about real markets.
-- **Terminal to engine link.** The terminal's order ticket, blotter and wallet run a demo simulation inside the browser. The C++ engine's results appear on the AI Engine page. Driving the terminal from the C++ core is the next increment.
+- **Real data inside the repo.** NSE daily files are downloaded on demand (`scripts/fetch_data.sh` or the *real-data-backtest* workflow) and are not committed, because redistribution terms are not verified. Without them the report uses SYNTHETIC data.
+- **Real ticks.** The terminal's prices are synthetic ticks. With NSE files present they start from the last real close.
+- **Dividend adjustment and MCX data.** Prices are adjusted for splits and bonuses only. No commodity data yet.
+- **Strategies in the terminal.** Momentum and mean reversion run in the backtest only. In the terminal, orders come from the ticket or the random stub.
 - **News, video and connector data.** Sample content only.
 - **GRIT.** The connector slot is empty; the "stub signals" button is random, not a model.
 - **Allocation-free hot path.** The order book preallocates its order pool, but price levels use `std::map`, which allocates.
@@ -38,7 +43,8 @@ which Codespaces forwards to a private address only you can open.
 
 ```
 bash scripts/build_and_report.sh   # build, run all tests, write web/reports/
-bash scripts/serve.sh              # terminal on http://localhost:8080
+bash scripts/serve.sh              # terminal on http://localhost:8080, driven by the C++ engine
+bash scripts/fetch_data.sh 2019-01-01   # optional: download NSE daily data and rerun the report on it
 ```
 
 To run on your own data, put `SYMBOL.csv` files (`date,open,high,low,close,volume`, date as YYYYMMDD, prices in rupees)

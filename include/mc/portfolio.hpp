@@ -45,6 +45,7 @@ class Portfolio {
   }
 
   double cash() const { return cash_; }
+  void deposit(double amount) { cash_ += amount; }
   double realized(std::uint16_t s) const { return realized_[s]; }
   double fees(std::uint16_t s) const { return fees_[s]; }
   double total_fees() const { double t = 0; for (double f : fees_) t += f; return t; }

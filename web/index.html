@@ -270,6 +270,7 @@ const HEAD=[['ADVERSE','ENERGY','Crude inventories rise more than forecast'],['A
 const WEB={RELIANCE:{n:'RELIANCE INDUSTRIES LTD',nse:'RELIANCE',bse:'500325',
   R:[['Jio Financial Services Ltd','JIOFIN','543940','Group company'],['Network18 Media & Investments Ltd','NETWORK18','532798','Subsidiary'],['Just Dial Ltd','JUSTDIAL','535648','Subsidiary'],['Hathway Cable & Datacom Ltd','HATHWAY','533162','Subsidiary'],['DEN Networks Ltd','DEN','533137','Subsidiary'],['Alok Industries Ltd','ALOKINDS','521070','Joint control'],['Reliance Industrial Infrastructure Ltd','RIIL','523445','Associate']],
   L:[['Reliance Retail Ventures Ltd','Subsidiary'],['Jio Platforms Ltd','Subsidiary'],['Reliance Jio Infocomm Ltd','Subsidiary'],['Reliance New Energy Ltd','Subsidiary'],['Reliance BP Mobility Ltd','Joint venture'],['Star India Pvt Ltd','Joint venture']]}};
+let API=false,timer=null;
 let S,stub=false,tk=0,hi=0,news=[],C={sym:'RELIANCE',pick:null,tab:0};
 function fresh(){S={cash:START,dep:0,real:0,fees:0,turn:0,curve:[],orders:[],pos:{},audit:[],ledger:[{t:now(),k:'OPENING DEMO BALANCE',a:START,b:START}],killed:false,halt:'',lock:false,sel:0,stamps:[],id:1}}
 fresh();
@@ -278,8 +279,9 @@ const equity=()=>S.cash+Object.entries(S.pos).reduce((a,[s,p])=>a+p.q*inst(s).p,
 const base=()=>START+S.dep;
 const dayPnl=()=>equity()-base();
 const gross=()=>Object.entries(S.pos).reduce((a,[s,p])=>a+Math.abs(p.q*inst(s).p),0);
-const openOrd=()=>S.orders.filter(o=>o.st==='ACKED');
-const rateNow=()=>{const t=Date.now();S.stamps=S.stamps.filter(x=>t-x<1000);return S.stamps.length};
+const isOpen=o=>o.st==='ACKED'||o.st==='PARTIALLY_FILLED';
+const openOrd=()=>S.orders.filter(isOpen);
+const rateNow=()=>{if(API)return S.rate||0;const t=Date.now();S.stamps=S.stamps.filter(x=>t-x<1000);return S.stamps.length};
 function log(k,m){S.audit.unshift({t:now(),k,m});if(S.audit.length>150)S.audit.pop()}
 
 function check(o){
@@ -346,10 +348,12 @@ function render(){
   for(let k=4;k>=1;k--)bk+='<tr><td class="dn">'+(b.p+b.t*k).toFixed(2)+'</td><td>'+(1+Math.floor(Math.random()*40))+'</td></tr>';
   bk+='<tr><td class="mute" colspan="2">spread '+(2*b.t).toFixed(2)+'</td></tr>';
   for(let k=1;k<=4;k++)bk+='<tr><td class="up">'+(b.p-b.t*k).toFixed(2)+'</td><td>'+(1+Math.floor(Math.random()*40))+'</td></tr>';
+  if(API&&S.book){const A=S.book.asks.slice().reverse(),B=S.book.bids,rw=(x,c)=>'<tr><td class="'+c+'">'+x[0].toFixed(2)+'</td><td>'+x[1]+'</td></tr>';
+    bk='<tr><th>Price</th><th>Size</th></tr>'+A.map(x=>rw(x,'dn')).join('')+'<tr><td class="mute" colspan="2">spread '+(A.length&&B.length?(S.book.asks[0][0]-B[0][0]).toFixed(2):'-')+'</td></tr>'+B.map(x=>rw(x,'up')).join('')}
   $('#book').innerHTML=bk;
   $('#news').innerHTML='<tr><th>Time</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline (sample)</th></tr>'+news.slice(0,3).map(x=>'<tr><td>'+x.t+'</td><td><span class="pill '+(x.k==='ADVERSE'?'bad':'lock')+'">'+x.k+'</span></td><td>'+x.g+'</td><td class="w">'+x.m+'</td></tr>').join('');
   $('#tape').innerHTML=HEAD.map(h=>'<span>SAMPLE · <b class="'+(h[0]==='ADVERSE'?'dn':'mute')+'">'+h[0]+'</b> · '+h[2]+'</span>').join('');
-  $('#blotter').innerHTML='<tr><th>Order</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,30).map(o=>'<tr title="'+o.t+' · '+o.src+(o.why?' · '+o.why:'')+'"><td>#'+o.id.slice(4)+(o.src==='AI-STUB'?' <span class="mute">AI</span>':'')+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+(o.fp||o.px||0).toFixed(2)+'</td><td>'+(o.st==='ACKED'?'<button class="btn sm" data-cx="'+o.id+'">Cancel</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':o.st==='ACKED'?'warn':'lock')+'">'+(o.st==='REJECTED_RISK'?'REJECTED':o.st)+'</span></td></tr>').join('')||'<tr><td colspan="6" class="mute w">No simulated orders yet. Place one from the ticket or start stub signals.</td></tr>');
+  $('#blotter').innerHTML='<tr><th>Order</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,30).map(o=>'<tr title="'+o.t+' · '+o.src+(o.why?' · '+o.why:'')+'"><td>#'+o.id.slice(4)+(o.src==='AI-STUB'?' <span class="mute">AI</span>':'')+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+(o.fp||o.px||0).toFixed(2)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+o.st+'">'+({FILLED:'FILL',REJECTED_RISK:'VETO',ACKED:'OPEN',PARTIALLY_FILLED:'PART',CANCELLED:'CXL'}[o.st]||o.st)+'</span></td></tr>').join('')||'<tr><td colspan="6" class="mute w">No simulated orders yet. Place one from the ticket or start stub signals.</td></tr>');
   $('#pos').innerHTML='<tr><th>Instrument</th><th>Qty</th><th>Unrealized</th></tr>'+(ps.map(([s,p])=>{const u=(inst(s).p-p.avg)*p.q;return'<tr title="avg '+p.avg.toFixed(2)+'"><td>'+s+'</td><td>'+p.q+'</td><td class="'+cls(u)+'">'+inr(u)+'</td></tr>'}).join('')||'<tr><td colspan="3" class="mute w">Flat. No simulated positions.</td></tr>');
   const rows=a=>'<tr><th>Time</th><th>Event</th><th style="text-align:left">Detail</th></tr>'+(a.map(x=>'<tr><td>'+x.t+'</td><td>'+x.k+'</td><td class="w">'+x.m+'</td></tr>').join('')||'<tr><td colspan="3" class="mute">Nothing recorded yet.</td></tr>');
   $('#alerts').innerHTML='<tr><th>Event</th><th style="text-align:left">Detail</th></tr>'+(S.audit.filter(x=>x.k!=='ORDER'&&x.k!=='FILL').slice(0,20).map(x=>'<tr title="'+x.t+'"><td>'+x.k+'</td><td class="w">'+x.m+'</td></tr>').join('')||'<tr><td colspan="2" class="mute">Nothing recorded yet.</td></tr>');
@@ -423,24 +427,46 @@ function order(side){
   const s=$('#tSym').value,type=$('#tType').value,q=Math.floor(+$('#tQty').value),px=+$('#tPx').value,m=$('#tMsg');
   if(!(q>=1)){m.textContent='Enter a quantity of 1 or more.';m.className='note dn';return}
   if(type==='LIMIT'&&!(px>0)){m.textContent='Enter a limit price for a LIMIT order.';m.className='note dn';return}
+  if(API){post('order',{sym:s,side,type,qty:q,px:type==='LIMIT'?px:0}).then(r=>{m.textContent=r.ok?'Simulated order accepted by the C++ engine.':'Risk engine rejected the order: '+r.why+'.';m.className='note '+(r.ok?'up':'dn');poll()});return}
   const why=submit(s,side,type,q,px);
   m.textContent=why?'Risk engine rejected the order: '+why+'.':'Simulated order accepted.';m.className='note '+(why?'dn':'up');render();
 }
 const ACT={
   buy:()=>order('BUY'),sell:()=>order('SELL'),mNo:closeM,
-  stub:()=>{stub=!stub;log('AI STUB','Stub signals '+(stub?'started':'stopped')+' by GJ');render()},
-  kill:()=>modal('Activate kill switch?','<p>Cancels every open simulated order and blocks all new orders, including AI orders, until you re-arm from Admin.</p><label style="display:flex;gap:8px;align-items:center"><input id="kFlat" type="checkbox" style="width:auto"> Also flatten all positions</label>','Activate kill switch',()=>{const f=$('#kFlat').checked;if(f)flatten();else cancelAll();S.killed=true;stub=false;log('KILL SWITCH','Activated by GJ'+(f?' with flatten':''))}),
-  cancelAll:()=>modal('Cancel all open orders?','<p>'+openOrd().length+' open simulated order(s) will be cancelled.</p>','Cancel all orders',cancelAll),
-  flatten:()=>modal('Flatten all positions?','<p>Closes '+Object.keys(S.pos).length+' simulated position(s) at market and cancels open orders.</p>','Flatten all',flatten),
-  rearm:()=>modal('Re-arm the system?','<p>Clears the kill switch, daily halt and profit lockout for this demo session.</p>','Re-arm',()=>{S.killed=false;S.halt='';S.lock=false;log('RE-ARM','System re-armed by GJ')}),
-  reset:()=>modal('Reset demo account?','<p>Clears all simulated orders, positions and the ledger, and restores the opening demo balance of '+inr(START)+'.</p>','Reset demo account',()=>{fresh();stub=false;log('RESET','Demo account reset')}),
-  fund:()=>modal('Fund demo wallet','<p class="mute">Demo money only. No payment is taken.</p><label class="f" for="fAmt">Amount (₹)<input id="fAmt" type="number" min="1" value="50000"></label><div class="row" style="margin-top:6px">'+[10000,50000,100000,500000].map(a=>'<button class="btn sm" data-amt="'+a+'">'+inr(a)+'</button>').join('')+'</div><p class="note dn" id="fErr"></p>','Add demo funds',()=>{const a=+$('#fAmt').value;if(!(a>0)){$('#fErr').textContent='Enter an amount above zero.';return false}S.cash+=a;S.dep+=a;S.ledger.unshift({t:now(),k:'DEMO FUNDING',a,b:base()});log('WALLET','Demo wallet funded with '+inr(a))})
+  stub:()=>{if(API){post('stub',{on:!stub}).then(poll);return}stub=!stub;log('AI STUB','Stub signals '+(stub?'started':'stopped')+' by GJ');render()},
+  kill:()=>modal('Activate kill switch?','<p>Cancels every open simulated order and blocks all new orders, including AI orders, until you re-arm from Admin.</p><label style="display:flex;gap:8px;align-items:center"><input id="kFlat" type="checkbox" style="width:auto"> Also flatten all positions</label>','Activate kill switch',()=>{const f=$('#kFlat').checked;if(API){post('kill',{flatten:f}).then(poll);return}if(f)flatten();else cancelAll();S.killed=true;stub=false;log('KILL SWITCH','Activated by GJ'+(f?' with flatten':''))}),
+  cancelAll:()=>modal('Cancel all open orders?','<p>'+openOrd().length+' open simulated order(s) will be cancelled.</p>','Cancel all orders',()=>{if(API){post('cancel_all').then(poll);return}cancelAll()}),
+  flatten:()=>modal('Flatten all positions?','<p>Closes '+Object.keys(S.pos).length+' simulated position(s) at market and cancels open orders.</p>','Flatten all',()=>{if(API){post('flatten').then(poll);return}flatten()}),
+  rearm:()=>modal('Re-arm the system?','<p>Clears the kill switch, daily halt and profit lockout for this demo session. Daily limits are then measured from current equity.</p>','Re-arm',()=>{if(API){post('rearm').then(poll);return}S.killed=false;S.halt='';S.lock=false;log('RE-ARM','System re-armed by GJ')}),
+  reset:()=>modal('Reset demo account?','<p>Clears all simulated orders, positions and the ledger, and restores the opening demo balance of '+inr(START)+'.</p>','Reset demo account',()=>{if(API){post('reset').then(poll);return}fresh();stub=false;log('RESET','Demo account reset')}),
+  fund:()=>modal('Fund demo wallet','<p class="mute">Demo money only. No payment is taken.</p><label class="f" for="fAmt">Amount (₹)<input id="fAmt" type="number" min="1" value="50000"></label><div class="row" style="margin-top:6px">'+[10000,50000,100000,500000].map(a=>'<button class="btn sm" data-amt="'+a+'">'+inr(a)+'</button>').join('')+'</div><p class="note dn" id="fErr"></p>','Add demo funds',()=>{const a=+$('#fAmt').value;if(!(a>0)){$('#fErr').textContent='Enter an amount above zero.';return false}if(API){post('fund',{amount:a}).then(poll);return}S.cash+=a;S.dep+=a;S.ledger.unshift({t:now(),k:'DEMO FUNDING',a,b:base()});log('WALLET','Demo wallet funded with '+inr(a))})
 };
+/* C++ engine link: when served by mc_server the terminal is a thin client of the engine */
+const post=(p,b)=>fetch('api/'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(r=>r.json()).catch(()=>({ok:false,why:'Engine not reachable'}));
+const hms=w=>new Date(w).toLocaleTimeString('en-GB');
+function applyState(j){
+  if(I.length!==j.inst.length||I.some((x,k)=>x.s!==j.inst[k].s)){I.length=0;j.inst.forEach(x=>I.push({s:x.s,v:x.v,p:x.p,o:x.o,t:x.t}));$('#tSym').innerHTML=I.map(i=>'<option>'+i.s+'</option>').join('');if(S.sel>=I.length)S.sel=0}
+  else j.inst.forEach((x,k)=>{I[k].p=x.p;I[k].o=x.o});
+  Object.assign(S,{cash:j.cash,dep:j.dep,real:j.real,fees:j.fees,turn:j.turn,killed:j.killed,halt:j.halt?'Daily loss limit hit':'',lock:j.lock,rate:j.rate,curve:j.curve,book:j.book});
+  S.orders=j.orders.map(o=>({id:o.id,t:hms(o.w),src:o.src,side:o.side,q:o.q,s:o.s,type:o.type,px:o.px||null,fp:o.fp||0,st:o.st,why:o.why}));
+  S.pos={};j.pos.forEach(p=>{S.pos[p.s]={q:p.q,avg:p.avg}});
+  S.audit=j.audit.map(e=>({t:hms(e.w),k:e.k,m:e.m}));
+  S.ledger=j.ledger.map(e=>({t:hms(e.w),k:e.k,a:e.a,b:e.b}));
+  stub=j.stub;
+}
+async function poll(){try{const r=await fetch('api/state?sel='+S.sel,{cache:'no-store'});if(!r.ok)return;applyState(await r.json());render()}catch(e){}}
+async function initApi(){
+  try{const r=await fetch('api/state',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(j.engine!=='cpp')return;
+    API=true;clearInterval(timer);applyState(j);
+    document.querySelector('.simband').textContent='SIMULATION · C++ ENGINE · DEMO ACCOUNT · SYNTHETIC TICKS · SAMPLE NEWS · NO REAL MONEY · NO BROKER';
+    render();setInterval(poll,1000);setInterval(()=>{if(++tk%6===0)pushNews()},1000)}catch(e){}
+}
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-act],[data-sel],[data-cx],[data-st],[data-amt],[data-node]');if(!t)return;
   const d=t.dataset;
   if(d.act)ACT[d.act]();
-  else if(d.sel){S.sel=+d.sel;$('#tSym').value=I[S.sel].s;render()}
+  else if(d.sel){S.sel=+d.sel;$('#tSym').value=I[S.sel].s;render();if(API)poll()}
+  else if(d.cx&&API){post('cancel',{id:d.cx}).then(poll)}
   else if(d.cx){const o=S.orders.find(x=>x.id===d.cx);if(o&&o.st==='ACKED'){o.st='CANCELLED';S.stamps.push(Date.now());log('CANCEL',o.id+' cancelled');render()}}
   else if(d.st){const x=STR[+d.st];x.on=!x.on;log('STRATEGY',x.n+(x.on?' enabled':' disabled')+' in SIM');render()}
   else if(d.amt){$('#fAmt').value=d.amt}
@@ -473,7 +499,7 @@ async function loadReports(){
 loadReports();
 log('SYSTEM','Preview started in SIMULATION mode with '+inr(START)+' demo funds');
 for(let k=0;k<4;k++)pushNews();
-C.pick='R1';renderWeb();render();setInterval(tick,1000);
+C.pick='R1';renderWeb();render();timer=setInterval(tick,1000);initApi();
 </script>
 </body>
 </html>

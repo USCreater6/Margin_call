@@ -85,6 +85,7 @@ class RiskEngine {
     return fired;
   }
   double day_start() const { return day_start_; }
+  void shift_day_start(double delta) { day_start_ += delta; }   // deposits are not profit
 
   // An order that only reduces an existing position is always allowed unless the kill switch is on.
   static bool reduces(const Order& o, Qty pos) {

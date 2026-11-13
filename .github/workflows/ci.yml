@@ -10,6 +10,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build, test, simulate
         run: bash scripts/build_and_report.sh
+      - name: Terminal server smoke test
+        run: |
+          ./build/mc_server --web web --port 8099 & sleep 2
+          curl -fsS localhost:8099/ | grep -q "MARGIN_CALL"
+          curl -fsS localhost:8099/api/state | grep -q '"engine":"cpp"'
+          curl -fsS -X POST localhost:8099/api/order -d '{"sym":"RELIANCE","side":"BUY","type":"MARKET","qty":1}' | grep -q '"ok":true'
+          curl -fsS -X POST localhost:8099/api/order -d '{"sym":"GOLDM","side":"BUY","type":"MARKET","qty":1}' | grep -q '"ok":false'
+          curl -fsS -X POST localhost:8099/api/kill -d '{"flatten":true}' | grep -q '"ok":true'
+          curl -fsS -X POST localhost:8099/api/order -d '{"sym":"RELIANCE","side":"BUY","type":"MARKET","qty":1}' | grep -q 'Kill switch'
+          kill %1
       - name: Upload SIMULATION report
         uses: actions/upload-artifact@v4
         with:

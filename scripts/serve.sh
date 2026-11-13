@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Serves the terminal on http://localhost:8080 (in Codespaces this port is forwarded privately to you).
+# Serves the terminal, driven by the C++ engine, on http://localhost:8080.
+# In Codespaces this port is forwarded privately to you.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-[ -f web/reports/report.json ] || bash scripts/build_and_report.sh
-command -v python3 >/dev/null || { echo "python3 is required to serve the terminal"; exit 1; }
-echo "Margin_call terminal (SIMULATION) on port 8080"
-cd web && exec python3 -m http.server 8080 --bind 0.0.0.0
+[ -x build/mc_server ] && [ -f web/reports/report.json ] || bash scripts/build_and_report.sh
+DATA_ARGS=()
+if [ -d data/nse ] && ls data/nse/*.csv >/dev/null 2>&1; then DATA_ARGS=(--data data/nse); fi
+exec ./build/mc_server --web web --port "${MC_PORT:-8080}" "${DATA_ARGS[@]}"
