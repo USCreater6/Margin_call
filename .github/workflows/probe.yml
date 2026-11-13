@@ -1,0 +1,13 @@
+name: probe-sources
+on:
+  workflow_dispatch:
+    inputs:
+      ymd: { description: "Date YYYYMMDD", default: "20261113" }
+      dmy: { description: "Same date DDMMYYYY", default: "13112026" }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/probe_sources.py "${{ inputs.ymd }}" "${{ inputs.dmy }}"
