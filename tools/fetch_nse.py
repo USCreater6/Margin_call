@@ -60,6 +60,8 @@ def auto_actions(rows, start, end):
             print(f"  corporate actions {sym}: unavailable ({e})"); continue
         by_date = {r[0]: r for r in rows[sym]}
         dates = sorted(by_date)
+        # Actions sharing an ex-date (e.g. split + bonus on the same day) combine: factors multiply.
+        per_ex = {}
         for x in data or []:
             subj = (x.get("subject") or "").strip()
             fac = None
@@ -70,14 +72,21 @@ def auto_actions(rows, start, end):
             if not fac or fac <= 1: continue
             try: ex = dt.datetime.strptime(x.get("exDate", ""), "%d-%b-%Y").date()
             except ValueError: continue
+            acts = per_ex.setdefault(ex, {})
+            acts[subj.lower()] = (subj, fac)          # same subject listed twice counts once
+        for ex in sorted(per_ex):
+            items = list(per_ex[ex].values())
+            fac = 1.0
+            for _, f in items: fac *= f
+            label = " + ".join(f"'{s}'" for s, _ in items)
             if ex not in by_date:
-                print(f"  {sym} {ex} '{subj}': ex-date not in the price data, not applied"); continue
+                print(f"  {sym} {ex} {label}: ex-date not in the price data, not applied"); continue
             i = dates.index(ex)
             if i == 0: continue
             prev_c, op = by_date[dates[i - 1]][4], by_date[ex][1]
             implied = prev_c / op if op > 0 else 0
             ok = abs(implied / fac - 1) < 0.20
-            print(f"  {sym} {ex} '{subj}': factor {fac:g}, price jump implies {implied:.3f} -> {'APPLIED' if ok else 'NOT CONFIRMED, not applied'}")
+            print(f"  {sym} {ex} {label}: factor {fac:g}, price jump implies {implied:.3f} -> {'APPLIED' if ok else 'NOT CONFIRMED, not applied'}")
             if ok: out.append((sym, ex, fac))
     return out
 
