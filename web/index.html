@@ -22,7 +22,6 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
 button,input,select{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .mono,table,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.simband{background:var(--accent);color:var(--on-accent);font-family:var(--mono);font-weight:600;font-size:11.5px;letter-spacing:.08em;text-align:center;padding:1px 16px}
 header{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;padding:4px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
 .brand{font-family:var(--mono);font-weight:600;font-size:15px;color:var(--accent);letter-spacing:.04em}
 nav{display:flex;gap:0;overflow-x:auto}
@@ -152,7 +151,6 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 </style>
 </head>
 <body>
-<div class="simband">SIMULATION · DEMO ACCOUNT · REPLAY OF A REAL NSE DAY (INTRADAY PATH SIMULATED) · SAMPLE NEWS · NO REAL MONEY · NO BROKER</div>
 <div class="offline" id="offline"><span id="offMsg">ENGINE NOT RUNNING: the terminal needs the C++ engine. No orders can be placed.</span> <button class="btn sm" onclick="location.reload()">Reload</button></div>
 <header>
   <div class="brand">MARGIN_CALL</div>
@@ -324,7 +322,6 @@ function renderNews(){
   const link=(x,txt)=>x.url?'<a href="'+H(x.url)+'" target="_blank" rel="noopener noreferrer" style="color:inherit">'+txt+'</a>':txt;
   $('#news').innerHTML='<tr><th>Age</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline · source</th></tr>'+(top.map(x=>'<tr title="'+H((x.why?x.why+' · ':'')+x.src+' · '+x.t)+'"><td>'+ago(x.t)+'</td><td><span class="pill '+(x.tag==='ADVERSE'?'bad':'lock')+'">'+H(x.tag)+'</span></td><td>'+H(x.topic||'-')+'</td><td class="w">'+link(x,H(x.title.slice(0,160)))+' <span class="mute">· '+H(x.src)+'</span></td></tr>').join('')||'<tr><td colspan="4" class="mute w">No items yet.</td></tr>');
   setTape(NEWS.items.slice(0,25).map(x=>'<span><b class="'+(x.tag==='ADVERSE'?'dn':'mute')+'">'+H(x.tag)+'</b> · '+H((x.topic?x.topic+' · ':'')+x.title.slice(0,140))+'</span>').join(''));
-  const sb=document.querySelector('.simband');sb.textContent=sb.textContent.replace('SAMPLE NEWS','LIVE NEWS (NSE FILINGS)');
   const st=NEWS.status||{};$('#newsSrc').textContent='LIVE · '+adv.length+' ADVERSE';$('#newsSrc').className='pill bad';
   $('#newsSrc').title='Updated '+NEWS.updated+'. NSE filings: '+(st.nse||'?')+'. GDELT: '+(st.gdelt||'?')+'. NSE items are tagged ADVERSE by a keyword rule; GDELT items by tone below -3.';
 }
@@ -561,7 +558,6 @@ async function poll(){
 async function initApi(){
   try{const r=await fetch('api/state',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(j.engine!=='cpp')return;
     API=true;applyState(j);
-    document.querySelector('.simband').textContent='SIMULATION · C++ ENGINE · DEMO ACCOUNT · REPLAY OF A REAL NSE DAY (INTRADAY PATH SIMULATED) · '+(NEWS?'LIVE NEWS (NSE FILINGS)':'SAMPLE NEWS')+' · NO REAL MONEY · NO BROKER';
     render();setInterval(poll,500)}catch(e){render()}
 }
 document.addEventListener('click',e=>{
