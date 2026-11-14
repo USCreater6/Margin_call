@@ -45,6 +45,16 @@ main{flex:1;min-height:0;padding:6px 16px}
 .split:hover::after,.split:focus-visible::after{background:var(--accent)}
 #v-account.on{grid-template-rows:minmax(0,1fr) minmax(0,1.15fr)}
 .side{grid-column:16 / span 9;grid-row:1 / span 2;display:flex;min-width:0;min-height:0}
+/* terminal columns: with the media panel open (it takes columns 16-24) and with it hidden */
+.tw{grid-column:span 6}.tb{grid-column:span 4}.tt{grid-column:span 5}.tbl{grid-column:span 6}.tp{grid-column:span 6}.ta{grid-column:span 3}
+#v-terminal.nomedia .tw{grid-column:span 7}#v-terminal.nomedia .tb{grid-column:span 5}#v-terminal.nomedia .tt{grid-column:span 12}
+#v-terminal.nomedia .tbl{grid-column:span 9}#v-terminal.nomedia .tp{grid-column:span 10}#v-terminal.nomedia .ta{grid-column:span 5}
+/* hidden media keeps running (TV sound keeps playing): moved off screen, not removed */
+#v-terminal.nomedia .side{position:fixed;left:-10000px;top:0;width:640px;height:480px}
+.ckb{width:auto;margin:0;vertical-align:middle}
+#v-terminal:not(.nomedia) .tc{display:none}
+.offline{background:var(--bad);color:#fff;font-family:var(--mono);font-weight:600;text-align:center;padding:2px 8px;display:none}
+.offline.on{display:block}
 .side>.panel{flex:1}
 .fix{overflow:hidden}
 #web{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
@@ -93,9 +103,9 @@ header select{width:auto;font-size:12px}
 .video.on{padding:0;background:#000}
 .video .play{width:36px;height:36px;border-radius:50%;border:2px solid var(--mute);flex:none;position:relative}
 .video .play::after{content:"";position:absolute;left:13px;top:9px;border-left:12px solid var(--mute);border-top:7px solid transparent;border-bottom:7px solid transparent}
-footer{flex:none;border-top:1px solid var(--line);background:var(--panel);overflow:hidden;white-space:nowrap;font-family:var(--mono);font-size:12px;padding:2px 0}
-footer div{display:inline-block;padding-left:100%;animation:tape 60s linear infinite}
-footer span{margin-right:36px}
+footer{flex:none;border-top:1px solid var(--line);background:var(--panel);overflow:hidden;white-space:nowrap;font-family:var(--mono);font-size:15px;line-height:1.5;padding:4px 0}
+footer div{display:inline-block;padding-left:100%;animation:tape 240s linear infinite}
+footer span{margin-right:56px}
 @keyframes tape{to{transform:translateX(-100%)}}
 @media(prefers-reduced-motion:reduce){footer div{animation:none;padding-left:16px}}
 /* connector web */
@@ -142,7 +152,8 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 </style>
 </head>
 <body>
-<div class="simband">SIMULATION · DEMO ACCOUNT · SYNTHETIC PRICES · SAMPLE NEWS · NO REAL MONEY · NO BROKER</div>
+<div class="simband">SIMULATION · DEMO ACCOUNT · REPLAY OF A REAL NSE DAY (INTRADAY PATH SIMULATED) · SAMPLE NEWS · NO REAL MONEY · NO BROKER</div>
+<div class="offline" id="offline">ENGINE NOT RUNNING: the terminal needs the C++ engine (scripts/serve.sh). No orders can be placed.</div>
 <header>
   <div class="brand">MARGIN_CALL</div>
   <nav id="nav"><a href="#terminal">Terminal</a><a href="#connector">Connector</a><a href="#engine">AI Engine</a><a href="#account">Account</a><a href="#risk">Risk</a><a href="#admin">Admin</a></nav>
@@ -150,20 +161,21 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
   <span class="pill" id="state">ARMED</span><span class="pill lock" title="Locked until Stage 4 approval">LIVE: LOCKED</span>
   <div class="kv">Demo equity<b id="hEq">-</b></div>
   <div class="kv">Day P&amp;L (SIM)<b id="hPnl">-</b></div>
-  <div class="kv">Orders / 1s<b id="hRate">0 / 8</b></div>
+  <div class="kv" title="Every order, cancel and exit counts. Never more than 8 in any rolling second.">Actions / 1s<b id="hRate">0 / 8</b></div>
+  <button class="btn sm" data-act="media" id="mediaBtn" title="Show or hide live TV and adverse media">MEDIA</button>
   <label class="kv" for="selMode">Mode<select id="selMode"><option value="auto">Auto</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
   <button class="btn kill" data-act="killOrArm" id="killBtn">KILL</button>
 </header>
 <main>
 
 <section class="view" id="v-terminal">
-  <div class="panel" style="grid-column:span 6"><h2>Watchlist <span class="pill sim" id="wlSrc" title="">SYNTHETIC</span></h2><div class="fix"><table id="watch"></table></div></div>
-  <div class="panel" style="grid-column:span 4"><h2>Book <span id="bookSym" class="mono"></span></h2><div class="fix"><table id="book"></table></div></div>
-  <div class="panel" style="grid-column:span 5"><h2>Order ticket <span class="pill sim">SIM</span></h2><div class="fix"><div class="body">
+  <div class="panel tw"><h2>Watchlist <span class="row" style="gap:4px;align-items:center"><span class="pill sim" id="wlSrc" title="">-</span><select id="spd" aria-label="Replay speed" title="Replay speed" style="width:auto;font-size:11px;padding:0 2px"><option value="1" title="Real time: the session takes 6 h 15 min">1× live</option><option value="2">2×</option><option value="6.25" title="Whole session in 60 minutes">60 min</option><option value="12.5" title="Whole session in 30 minutes">30 min</option><option value="25" title="Whole session in 15 minutes">15 min</option><option value="0">Pause</option></select><button class="btn sm" data-act="restart" title="Start the day again from 09:15 (only when flat)">↺</button></span></h2><div class="fix"><table id="watch"></table></div></div>
+  <div class="panel tb"><h2>Book <span id="bookSym" class="mono"></span></h2><div class="fix"><table id="book"></table></div></div>
+  <div class="panel tt"><h2>Order ticket <span class="pill sim">SIM</span></h2><div class="fix"><div class="body">
     <div class="g2">
       <label class="f" for="tSym">Instrument<select id="tSym"></select></label>
       <label class="f" for="tType">Type<select id="tType"><option>MARKET</option><option>LIMIT</option></select></label>
-      <label class="f" for="tQty">Quantity<input id="tQty" type="number" min="1" value="1"></label>
+      <label class="f" for="tQty"><span id="tQtyL">Quantity</span><input id="tQty" type="number" min="1" value="1"></label>
       <label class="f" for="tPx">Limit price<input id="tPx" type="number" step="0.05" placeholder="market"></label>
       <button class="btn buy" data-act="buy">BUY</button><button class="btn sell" data-act="sell">SELL</button>
     </div>
@@ -175,15 +187,15 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
     <p class="note">Stub signals are random, not GRIT.</p>
   </div></div></div>
   <div class="side">
-    <div class="panel"><h2>Adverse media <span class="pill sim" id="newsSrc">SAMPLE</span></h2>
+    <div class="panel"><h2>Adverse media <span class="row" style="gap:4px;align-items:center"><span class="pill sim" id="newsSrc">SAMPLE</span><button class="btn sm" data-act="media" title="Hide (TV keeps playing)">Hide ▸</button></span></h2>
       <div class="tvbar"><select id="chan" aria-label="TV channel"><option>Loading channels…</option></select><a id="chanOpen" class="btn sm" href="#" target="_blank" rel="noopener noreferrer">Open on YouTube</a></div>
-      <div class="video" id="tv"><div class="play"></div><div id="tvMsg">Channel list is built when the Codespace starts (tools/check_channels.py).</div></div>
+      <div class="video" id="tv"><div class="play"></div><div id="tvMsg">Loading the channel list…</div></div>
       <div class="fix"><table id="news"></table></div>
     </div>
   </div>
-  <div class="panel" style="grid-column:span 7"><h2>Order blotter <button class="btn sm" data-act="cancelAll">Cancel all</button></h2><div class="scroll"><table id="blotter"></table></div></div>
-  <div class="panel" style="grid-column:span 4"><h2>Positions <button class="btn sm" data-act="flatten">Flatten all</button></h2><div class="scroll"><table id="pos"></table></div></div>
-  <div class="panel" style="grid-column:span 4"><h2>Alerts</h2><div class="scroll"><table id="alerts"></table></div></div>
+  <div class="panel tbl"><h2>Order blotter <button class="btn sm" data-act="cancelAll">Cancel all</button></h2><div class="scroll"><table id="blotter"></table></div></div>
+  <div class="panel tp"><h2>Positions <span class="mono" id="posN"></span> <span class="row" style="gap:4px"><button class="btn sm" data-act="closeSel" id="closeSel">Close selected</button><button class="btn sm" data-act="flatten">Flatten all</button></span></h2><div class="scroll"><table id="pos"></table></div></div>
+  <div class="panel ta"><h2>Alerts</h2><div class="scroll"><table id="alerts"></table></div></div>
 </section>
 
 <section class="view" id="v-connector">
@@ -281,64 +293,28 @@ const inr=n=>(n<0?'-':'')+'₹'+Math.abs(n).toLocaleString('en-IN',{minimumFract
 const pct=n=>(n*100).toFixed(2)+'%';
 const cls=n=>n>0?'up':n<0?'dn':'mute';
 const now=()=>new Date().toLocaleTimeString('en-GB');
-const FEE=0.0003, START=100000;
-const L={stop:.02,profit:.10,loss:.03,stratLoss:.015,notional:.25,gross:1,maxPos:3,maxOrd:6,rate:8};
-const I=[{s:'NIFTY-FUT',v:'NSE F&O',p:25000,t:.5},{s:'RELIANCE',v:'NSE',p:1400,t:.1},{s:'HDFCBANK',v:'NSE',p:1000,t:.1},{s:'TCS',v:'NSE',p:3000,t:.1},{s:'GOLDM',v:'MCX',p:100000,t:1},{s:'CRUDEOIL',v:'MCX',p:6000,t:1}];
-I.forEach(i=>{i.o=i.p});
-const STR=[{n:'Momentum',ph:'Launch',on:true,a:.5},{n:'Mean reversion',ph:'Launch',on:true,a:.5},{n:'AI engine (GRIT)',ph:'Slot open'},{n:'Basis arbitrage',ph:'Phase 2'},{n:'Cross-exchange arb',ph:'Phase 3'},{n:'Statistical arb',ph:'Phase 4'},{n:'Market making',ph:'Phase 5'}];
-const HEAD=[['ADVERSE','ENERGY','Crude inventories rise more than forecast'],['ADVERSE','INDEX','Regulator proposes tighter margin rules for index derivatives'],['ADVERSE','BANKS','Large bank reports higher provisions in quarterly results'],['NEUTRAL','GOLD','Gold demand steady ahead of the festival season'],['ADVERSE','IT','IT services firm trims revenue guidance'],['ADVERSE','ENERGY','Refinery outage reported at a west-coast facility'],['NEUTRAL','MACRO','Central bank holds policy rate, as expected']];
-let API=false,timer=null;
-let S,stub=false,tk=0,hi=0,news=[],C={isin:'',pick:null,data:null,idx:null,hist:{}};
-function fresh(){S={cash:START,dep:0,real:0,fees:0,turn:0,curve:[],orders:[],pos:{},audit:[],ledger:[{t:now(),k:'OPENING DEMO BALANCE',a:START,b:START}],killed:false,halt:'',lock:false,sel:0,stamps:[],id:1}}
+const L={stop:.02,profit:.10,loss:.03,stratLoss:.015,gross:1,maxPos:3,maxOrd:6,rate:8};
+const I=[];   /* instruments come from the C++ engine */
+const STR=[{n:'Momentum',ph:'Launch',a:.5},{n:'Mean reversion',ph:'Launch',a:.5},{n:'AI engine (GRIT)',ph:'Slot open'},{n:'Basis arbitrage',ph:'Phase 2'},{n:'Cross-exchange arb',ph:'Phase 3'},{n:'Statistical arb',ph:'Phase 4'},{n:'Market making',ph:'Phase 5'}];
+const HEAD=[['ADVERSE','SAMPLE','Live NSE filings appear here once the news feed has loaded']];
+let API=false;
+let S,stub=false,tk=0,hi=0,news=[],SELL=new Set(),RP=null,C={isin:'',pick:null,data:null,idx:null,hist:{}};
+function fresh(){S={cash:0,dep:0,real:0,fees:0,turn:0,curve:[],orders:[],pos:{},lots:[],audit:[],ledger:[],killed:false,halt:'',lock:false,sel:0,rate:0,queued:0}}
 fresh();
-const inst=s=>I.find(i=>i.s===s);
+const START=()=>S.start||0;
+const inst=s=>I.find(i=>i.s===s)||{p:0,lot:1};
 const equity=()=>S.cash+Object.entries(S.pos).reduce((a,[s,p])=>a+p.q*inst(s).p,0);
-const base=()=>START+S.dep;
+const base=()=>START()+S.dep;
 const dayPnl=()=>equity()-base();
 const gross=()=>Object.entries(S.pos).reduce((a,[s,p])=>a+Math.abs(p.q*inst(s).p),0);
 const isOpen=o=>o.st==='ACKED'||o.st==='PARTIALLY_FILLED';
 const openOrd=()=>S.orders.filter(isOpen);
-const rateNow=()=>{if(API)return S.rate||0;const t=Date.now();S.stamps=S.stamps.filter(x=>t-x<1000);return S.stamps.length};
-function log(k,m){S.audit.unshift({t:now(),k,m});if(S.audit.length>150)S.audit.pop()}
-
-function check(o){
-  if(S.killed)return'Kill switch is active';
-  if(rateNow()>=L.rate)return'Rate cap reached: 8 orders per second';
-  const p=S.pos[o.s],sq=o.side==='BUY'?o.q:-o.q;
-  if(p&&Math.sign(p.q)!==Math.sign(sq)&&o.q<=Math.abs(p.q))return'';
-  if(o.side==='SELL')return'Long-only: you can sell only what you hold';
-  if(S.halt)return S.halt+': no new risk';
-  if(S.lock)return'Daily profit lockout: no new risk';
-  const n=o.q*o.ref,eq=equity();
-  if(n>L.notional*eq)return'Order value '+inr(n)+' exceeds limit '+inr(L.notional*eq);
-  if(openOrd().length>=L.maxOrd)return'Maximum open orders reached ('+L.maxOrd+')';
-  if(!p&&Object.keys(S.pos).length>=L.maxPos)return'Maximum open positions reached ('+L.maxPos+')';
-  if(gross()+n>L.gross*eq)return'Gross exposure would exceed '+pct(L.gross)+' of equity';
-  return'';
-}
-function fill(o,px){
-  const n=o.q*px,fee=n*FEE,sq=o.side==='BUY'?o.q:-o.q;
-  S.cash+=o.side==='BUY'?-(n+fee):(n-fee);S.fees+=fee;S.turn+=n;
-  const p=S.pos[o.s]||{q:0,avg:0};
-  if(p.q===0||Math.sign(p.q)===Math.sign(sq)){p.avg=(Math.abs(p.q)*p.avg+o.q*px)/(Math.abs(p.q)+o.q);p.q+=sq}
-  else{const c=Math.min(o.q,Math.abs(p.q));S.real+=(px-p.avg)*c*Math.sign(p.q);p.q+=sq;if(Math.sign(p.q)===Math.sign(sq))p.avg=px}
-  if(p.q===0)delete S.pos[o.s];else S.pos[o.s]=p;
-  o.st='FILLED';o.fp=px;
-  log('FILL','SIM '+o.id+' '+o.side+' '+o.q+' '+o.s+' @ '+px.toFixed(2)+' fee '+inr(fee));
-}
-function submit(s,side,type,q,px,src){
-  const i=inst(s),o={id:'SIM-'+String(S.id++).padStart(4,'0'),t:now(),s,side,type,q,px:type==='LIMIT'?px:null,src:src||'MANUAL',st:'NEW'};
-  o.ref=type==='LIMIT'?px:i.p;
-  S.orders.unshift(o);if(S.orders.length>200)S.orders.pop();
-  const why=src==='RISK'?'':check(o);
-  if(why){o.st='REJECTED_RISK';o.why=why;log('RISK VETO',o.id+' ('+o.src+') '+why);return why}
-  S.stamps.push(Date.now());
-  if(type==='MARKET')fill(o,side==='BUY'?i.p+i.t:i.p-i.t);
-  else{o.st='ACKED';log('ORDER','SIM '+o.id+' '+side+' '+q+' '+s+' LIMIT '+px.toFixed(2))}
-  return'';
-}
-function cancelAll(){openOrd().forEach(o=>{o.st='CANCELLED'});log('CANCEL ALL','All open simulated orders cancelled')}
-function flatten(){cancelAll();Object.entries(S.pos).forEach(([s,p])=>submit(s,p.q>0?'SELL':'BUY','MARKET',Math.abs(p.q),0,'RISK'));log('FLATTEN','All simulated positions closed')}
+const rateNow=()=>S.rate||0;
+/* engine timestamps are nanoseconds since 1970 (strings: too long for a JS number) */
+const nsMs=ns=>ns&&ns!=='0'?Number(String(ns).slice(0,-6)):0;
+const tms=ns=>{const m=nsMs(ns);if(!m)return'-';const d=new Date(m);return d.toLocaleTimeString('en-GB')+'.'+String(d.getMilliseconds()).padStart(3,'0')};
+const mtx=s=>{if(!(s>=0))return'';const t=33300+Math.floor(s);return String(Math.floor(t/3600)).padStart(2,'0')+':'+String(Math.floor(t/60)%60).padStart(2,'0')+':'+String(t%60).padStart(2,'0')};
+const tip=(ns,mt)=>'Wall clock '+tms(ns)+' · '+ns+' ns since 1970'+(mt>=0?' · replay market time '+mtx(mt):'');
 let NEWS=null;
 const ago=t=>{if(!t)return'';const m=Math.round((Date.now()-new Date(t))/60000);return m<60?m+'m':m<1440?Math.round(m/60)+'h':Math.round(m/1440)+'d'};
 function renderNews(){
@@ -347,7 +323,7 @@ function renderNews(){
   const top=adv.slice(0,3).concat(rest).slice(0,3);
   const link=(x,txt)=>x.url?'<a href="'+H(x.url)+'" target="_blank" rel="noopener noreferrer" style="color:inherit">'+txt+'</a>':txt;
   $('#news').innerHTML='<tr><th>Age</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline · source</th></tr>'+(top.map(x=>'<tr title="'+H((x.why?x.why+' · ':'')+x.src+' · '+x.t)+'"><td>'+ago(x.t)+'</td><td><span class="pill '+(x.tag==='ADVERSE'?'bad':'lock')+'">'+H(x.tag)+'</span></td><td>'+H(x.topic||'-')+'</td><td class="w">'+link(x,H(x.title.slice(0,160)))+' <span class="mute">· '+H(x.src)+'</span></td></tr>').join('')||'<tr><td colspan="4" class="mute w">No items yet.</td></tr>');
-  $('#tape').innerHTML=NEWS.items.slice(0,25).map(x=>'<span><b class="'+(x.tag==='ADVERSE'?'dn':'mute')+'">'+H(x.tag)+'</b> · '+H((x.topic?x.topic+' · ':'')+x.title.slice(0,140))+'</span>').join('');
+  setTape(NEWS.items.slice(0,25).map(x=>'<span><b class="'+(x.tag==='ADVERSE'?'dn':'mute')+'">'+H(x.tag)+'</b> · '+H((x.topic?x.topic+' · ':'')+x.title.slice(0,140))+'</span>').join(''));
   const sb=document.querySelector('.simband');sb.textContent=sb.textContent.replace('SAMPLE NEWS','LIVE NEWS (NSE FILINGS)');
   const st=NEWS.status||{};$('#newsSrc').textContent='LIVE · '+adv.length+' ADVERSE';$('#newsSrc').className='pill bad';
   $('#newsSrc').title='Updated '+NEWS.updated+'. NSE filings: '+(st.nse||'?')+'. GDELT: '+(st.gdelt||'?')+'. NSE items are tagged ADVERSE by a keyword rule; GDELT items by tone below -3.';
@@ -356,41 +332,33 @@ async function loadNews(){
   try{const r=await fetch('data/news.json',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(!j.items||!j.items.length)return;NEWS=j;renderNews()}catch(e){}
 }
 function pushNews(){if(NEWS)return;const h=HEAD[hi++%HEAD.length];news.unshift({t:now(),k:h[0],g:h[1],m:h[2]});if(news.length>30)news.pop()}
-
-function tick(){
-  tk++;
-  I.forEach(i=>{i.p=Math.max(i.t,Math.round((i.p*(1+(Math.random()-.5)*.0016))/i.t)*i.t)});
-  openOrd().forEach(o=>{const i=inst(o.s);if(o.side==='BUY'&&i.p+i.t<=o.px)fill(o,o.px);else if(o.side==='SELL'&&i.p-i.t>=o.px)fill(o,o.px)});
-  Object.entries(S.pos).forEach(([s,p])=>{const u=(inst(s).p-p.avg)*p.q;if(u<=-L.stop*Math.abs(p.q)*p.avg){log('STOP','2% per-trade stop hit on '+s);submit(s,p.q>0?'SELL':'BUY','MARKET',Math.abs(p.q),0,'RISK')}});
-  if(tk%6===0)pushNews();
-  if(stub&&tk%4===0){const i=I[1+Math.floor(Math.random()*3)],side=Math.random()<.5?'BUY':'SELL';log('AI STUB','Random stub signal: '+side+' 1 '+i.s);submit(i.s,side,'MARKET',1,0,'AI-STUB')}
-  const d=dayPnl();S.curve.push(d);if(S.curve.length>900)S.curve.shift();
-  if(!S.halt&&d<=-L.loss*base()){S.halt='Daily loss limit hit';cancelAll();log('HALT','Global daily loss limit reached. New risk blocked.')}
-  if(!S.lock&&d>=L.profit*base()){S.lock=true;log('LOCKOUT','Daily profit target reached. New risk blocked.')}
-  render();
-}
+/* bottom news line: constant reading speed whatever its length (px per second) */
+let TAPE='';
+function setTape(h){if(h===TAPE)return;TAPE=h;const t=$('#tape');t.innerHTML=h;requestAnimationFrame(()=>{const px=t.scrollWidth+innerWidth;t.style.animationDuration=Math.max(30,Math.round(px/40))+'s'})}
 
 function render(){
   const eq=equity(),d=dayPnl(),ps=Object.entries(S.pos);
   $('#hEq').textContent=inr(eq);$('#hPnl').textContent=inr(d)+' ('+pct(d/base())+')';$('#hPnl').className=cls(d);
-  $('#hRate').textContent=rateNow()+' / '+L.rate;
+  $('#hRate').textContent=rateNow()+' / '+(S.rate_max||8)+(S.queued?' · '+S.queued+' queued':'');
+  $('#offline').classList.toggle('on',!API);
   const kb=$('#killBtn');kb.textContent=S.killed?'RE-ARM':'KILL';kb.className='btn '+(S.killed?'arm':'kill');
   const st=$('#state');st.textContent=S.killed?'KILLED':S.halt?'HALTED':S.lock?'PROFIT LOCK':'ARMED';st.className='pill '+(S.killed||S.halt?'bad':S.lock?'warn':'ok');
   $('#stubBtn').textContent=stub?'Stop stub signals':'Start stub signals';
-  $('#watch').innerHTML='<tr><th>Instrument</th><th>Venue</th><th>Last</th><th>Chg</th></tr>'+I.map((i,k)=>{const c=i.p/i.o-1;return'<tr class="pick'+(k===S.sel?' sel':'')+'" data-sel="'+k+'"><td>'+i.s+'</td><td class="mute">'+i.v+'</td><td>'+i.p.toFixed(2)+'</td><td class="'+cls(c)+'">'+pct(c)+'</td></tr>'}).join('');
-  const b=I[S.sel];$('#bookSym').textContent=b.s;
+  $('#watch').innerHTML='<tr><th>Instrument</th><th>Venue</th><th>Last</th><th>Chg</th></tr>'+(I.map((i,k)=>{const c=i.pc?i.p/i.pc-1:0,dy=i.day;return'<tr class="pick'+(k===S.sel?' sel':'')+'" data-sel="'+k+'" title="'+H((dy?'NSE '+dy.date+': open '+dy.o.toFixed(2)+' · high '+dy.h.toFixed(2)+' · low '+dy.l.toFixed(2)+' · close '+dy.c.toFixed(2)+' · previous close '+i.pc.toFixed(2)+'. ':'No NSE day data: price held. ')+'Lot '+i.lot+'. Depth: '+i.depth+'. Chg is against the previous close.')+'"><td>'+H(i.s)+(i.lot>1?' <span class="mute">×'+i.lot+'</span>':'')+'</td><td class="mute">'+H(i.v)+'</td><td>'+i.p.toFixed(2)+'</td><td class="'+cls(c)+'">'+pct(c)+'</td></tr>'}).join('')||'<tr><td colspan="4" class="mute w">No instruments: engine not running.</td></tr>');
+  const b=I[S.sel];$('#bookSym').textContent=b?b.s:'';
   let bk='<tr><th>Price</th><th>Size</th></tr>';
-  for(let k=4;k>=1;k--)bk+='<tr><td class="dn">'+(b.p+b.t*k).toFixed(2)+'</td><td>'+(1+Math.floor(Math.random()*40))+'</td></tr>';
-  bk+='<tr><td class="mute" colspan="2">spread '+(2*b.t).toFixed(2)+'</td></tr>';
-  for(let k=1;k<=4;k++)bk+='<tr><td class="up">'+(b.p-b.t*k).toFixed(2)+'</td><td>'+(1+Math.floor(Math.random()*40))+'</td></tr>';
-  if(API&&S.book){const A=S.book.asks.slice().reverse(),B=S.book.bids,rw=(x,c)=>'<tr><td class="'+c+'">'+x[0].toFixed(2)+'</td><td>'+x[1]+'</td></tr>';
-    bk='<tr><th>Price</th><th>Size</th></tr>'+A.map(x=>rw(x,'dn')).join('')+'<tr><td class="mute" colspan="2">spread '+(A.length&&B.length?(S.book.asks[0][0]-B[0][0]).toFixed(2):'-')+'</td></tr>'+B.map(x=>rw(x,'up')).join('')}
+  if(S.book){const A=S.book.asks.slice().reverse(),B=S.book.bids,rw=(x,c)=>'<tr><td class="'+c+'">'+x[0].toFixed(2)+'</td><td>'+x[1].toLocaleString('en-IN')+'</td></tr>';
+    bk+=A.map(x=>rw(x,'dn')).join('')+'<tr><td class="mute" colspan="2">spread '+(A.length&&B.length?(S.book.asks[0][0]-B[0][0]).toFixed(2):'-')+'</td></tr>'+B.map(x=>rw(x,'up')).join('')}
   $('#book').innerHTML=bk;
   if(!NEWS)$('#news').innerHTML='<tr><th>Time</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline (sample)</th></tr>'+news.slice(0,3).map(x=>'<tr><td>'+x.t+'</td><td><span class="pill '+(x.k==='ADVERSE'?'bad':'lock')+'">'+x.k+'</span></td><td>'+x.g+'</td><td class="w">'+x.m+'</td></tr>').join('');
   if(NEWS)renderNews();
-  if(!NEWS)$('#tape').innerHTML=HEAD.map(h=>'<span>SAMPLE · <b class="'+(h[0]==='ADVERSE'?'dn':'mute')+'">'+h[0]+'</b> · '+h[2]+'</span>').join('');
-  $('#blotter').innerHTML='<tr><th>Order</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,30).map(o=>'<tr title="'+H(o.t+' · '+o.src+(o.why?' · '+o.why:''))+'"><td>#'+o.id.slice(4)+(o.src==='AI-STUB'?' <span class="mute">AI</span>':'')+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+pxCell(o)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+o.st+'">'+({FILLED:'FILL',REJECTED_RISK:'VETO',ACKED:'OPEN',PARTIALLY_FILLED:'PART',CANCELLED:'CXL'}[o.st]||o.st)+'</span></td></tr>'+(o.st==='REJECTED_RISK'&&o===S.orders[0]?'<tr><td colspan="6" class="w dn" style="font-size:11px">'+H(o.why)+(FUNDABLE.includes(o.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':'')+'</td></tr>':'')).join('')||'<tr><td colspan="6" class="mute w">No simulated orders yet. Place one from the ticket or start stub signals.</td></tr>');
-  $('#pos').innerHTML='<tr><th>Instrument</th><th>Qty</th><th>Unrealized</th></tr>'+(ps.map(([s,p])=>{const u=(inst(s).p-p.avg)*p.q;return'<tr title="avg '+p.avg.toFixed(2)+'"><td>'+s+'</td><td>'+p.q+'</td><td class="'+cls(u)+'">'+inr(u)+'</td></tr>'}).join('')||'<tr><td colspan="3" class="mute w">Flat. No simulated positions.</td></tr>');
+  if(!NEWS)setTape(HEAD.map(h=>'<span>SAMPLE · <b class="mute">'+h[0]+'</b> · '+h[2]+'</span>').join(''));
+  const stx=o=>o.st==='FILLED'?'FILLED':o.st==='REJECTED_RISK'?'VETO':o.st==='ACKED'?'OPEN':o.st==='PARTIALLY_FILLED'?'PART '+o.f+'/'+o.q:o.st==='CANCELLED'?(o.f>0?'CXL · '+o.f+'/'+o.q+' filled':'CXL'):o.st;
+  $('#blotter').innerHTML='<tr><th>Order</th><th class="tc">Time</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,40).map(o=>'<tr title="'+H(tip(o.ns,o.mt)+' · '+o.src+(o.lot?' · closes lot '+o.lot:'')+(o.why?' · '+o.why:''))+'"><td>#'+o.id.slice(4)+(o.src==='AI-STUB'?' <span class="mute">stub</span>':o.src!=='MANUAL'?' <span class="mute">'+H(o.src.toLowerCase())+'</span>':'')+'</td><td class="mute tc">'+tms(o.ns)+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+qtyTxt(o.q,o.s)+'</td><td>'+H(o.s)+'</td><td>'+pxCell(o)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+o.st+'">'+stx(o)+'</span></td></tr>'+(o.st==='REJECTED_RISK'&&o===S.orders[0]?'<tr><td colspan="7" class="w dn" style="font-size:11px">'+H(o.why)+(FUNDABLE.includes(o.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':'')+'</td></tr>':'')).join('')||'<tr><td colspan="7" class="mute w">No simulated orders yet.</td></tr>');
+  const lots=S.lots||[];[...SELL].forEach(id=>{if(!lots.some(l=>l.id===id&&!l.c))SELL.delete(id)});
+  $('#posN').textContent=lots.length?lots.length+' open':'';
+  $('#closeSel').textContent='Close selected'+(SELL.size?' ('+SELL.size+')':'');$('#closeSel').disabled=!SELL.size;
+  $('#pos').innerHTML='<tr><th><input type="checkbox" class="ckb" id="ckAll" aria-label="Select all positions"'+(lots.length&&lots.every(l=>l.c||SELL.has(l.id))&&SELL.size?' checked':'')+'></th><th>Position</th><th class="tc">Time</th><th>Instrument</th><th>Qty</th><th>Entry</th><th class="tc">Last</th><th>Unrealized</th><th></th></tr>'+(lots.map(l=>{const p=inst(l.s).p,u=(p-l.e)*l.q;return'<tr title="'+H(tip(l.ns,l.mt))+'"><td>'+(l.c?'':'<input type="checkbox" class="ckb" data-ck="'+l.id+'"'+(SELL.has(l.id)?' checked':'')+' aria-label="Select '+l.id+'">')+'</td><td>#'+l.id.slice(4)+'</td><td class="mute tc">'+tms(l.ns)+'</td><td>'+H(l.s)+'</td><td>'+qtyTxt(l.q,l.s)+'</td><td>'+l.e.toFixed(2)+'</td><td class="tc">'+p.toFixed(2)+'</td><td class="'+cls(u)+'">'+inr(u)+'</td><td>'+(l.c?'<span class="pill warn" title="Exit queued or being filled">CLOSING · '+H(l.by.toLowerCase())+'</span>':'<button class="btn sm sell" data-close="'+l.id+'" title="Close this position at market">Close</button>')+'</td></tr>'}).join('')||'<tr><td colspan="9" class="mute w">Flat. No simulated positions.</td></tr>');
   const rows=a=>'<tr><th>Time</th><th>Event</th><th style="text-align:left">Detail</th></tr>'+(a.map(x=>'<tr><td>'+x.t+'</td><td>'+x.k+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="3" class="mute">Nothing recorded yet.</td></tr>');
   $('#alerts').innerHTML='<tr><th>Event</th><th style="text-align:left">Detail</th></tr>'+(S.audit.filter(x=>x.k!=='ORDER'&&x.k!=='FILL').slice(0,20).map(x=>'<tr title="'+x.t+'"><td>'+H(x.k)+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="2" class="mute">Nothing recorded yet.</td></tr>');
   $('#audit').innerHTML=rows(S.audit.slice(0,80));
@@ -407,7 +375,7 @@ function render(){
   $('#revt').innerHTML=rows(S.audit.filter(x=>['RISK VETO','STOP','HALT','LOCKOUT','KILL SWITCH','CANCEL ALL','FLATTEN','RE-ARM'].includes(x.k)).slice(0,60));
   $('#strat').innerHTML='<tr><th>Strategy</th><th>Phase</th><th>Allocation</th><th>Status</th></tr>'+STR.map((x,k)=>'<tr><td>'+x.n+'</td><td class="mute">'+x.ph+'</td><td>'+(x.a?pct(x.a):'-')+'</td><td>'+(x.a?(API?'<span class="pill" title="Runs in the backtest on the AI Engine page; not yet connected to the live session">BACKTEST ONLY</span>':'<button class="btn sm" data-st="'+k+'">'+(x.on?'Enabled in SIM':'Disabled')+'</button>'):'<span class="pill lock">LOCKED</span>')+'</td></tr>').join('');
   const bar=(u,m)=>{const r=Math.min(1,Math.max(0,u/m));return'<div class="bar"><i class="'+(r>.9?'b':r>.6?'w':'')+'" style="width:'+(r*100).toFixed(0)+'%"></i></div>'};
-  const R=[['Per-trade stop','2% of trade capital',0,'auto-exit',''],['Daily profit lockout','+10% · '+inr(L.profit*base()),0,inr(Math.max(0,d)),bar(Math.max(0,d),L.profit*base())],['Global daily loss','3% · '+inr(L.loss*base()),1,inr(Math.max(0,-d)),bar(Math.max(0,-d),L.loss*base())],['Per-strategy daily loss','1.5% · '+inr(L.stratLoss*base()),1,'no runs',''],['Max order value','25% of equity · '+inr(L.notional*eq),1,'per order',''],['Gross exposure','100% of equity',1,inr(gross()),bar(gross(),L.gross*eq)],['Open positions',String(L.maxPos),1,String(ps.length),bar(ps.length,L.maxPos)],['Open orders',String(L.maxOrd),1,String(openOrd().length),bar(openOrd().length,L.maxOrd)],['Order rate','8 per second',0,rateNow()+' in last 1s',bar(rateNow(),L.rate)]];
+  const R=[['Per-trade stop','2% of trade capital',0,'auto-exit',''],['Daily profit lockout','+10% · '+inr(L.profit*base()),0,inr(Math.max(0,d)),bar(Math.max(0,d),L.profit*base())],['Global daily loss','3% · '+inr(L.loss*base()),1,inr(Math.max(0,-d)),bar(Math.max(0,-d),L.loss*base())],['Per-strategy daily loss','1.5% · '+inr(L.stratLoss*base()),1,'no runs',''],['Max order value','removed by you, 14 Nov',0,'-',''],['Gross exposure','100% of equity',1,inr(gross()),bar(gross(),L.gross*eq)],['Open instruments',String(L.maxPos),1,String(ps.length),bar(ps.length,L.maxPos)],['Open orders',String(L.maxOrd),1,String(openOrd().length),bar(openOrd().length,L.maxOrd)],['Action rate (orders, cancels, exits)','8 in any rolling second',0,rateNow()+' in last 1s'+(S.queued?', '+S.queued+' queued':''),bar(rateNow(),L.rate)]];
   $('#risk').innerHTML='<tr><th>Limit</th><th>Value</th><th>Source</th><th>Used now</th><th>Usage</th></tr>'+R.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td>'+(r[2]?'<span class="pill warn">proposed</span>':'<span class="mute">fixed by you</span>')+'</td><td>'+r[3]+'</td><td>'+(r[4]||'<span class="mute">-</span>')+'</td></tr>').join('');
 }
 
@@ -534,35 +502,45 @@ $('#mOk').onclick=()=>{const f=mCb;if(f&&f()===false)return;closeM();render()};
 const FUNDABLE=['INSUFFICIENT_CASH','ORDER_NOTIONAL','GROSS_EXPOSURE'];
 // price shown in tables: average fill price if filled, limit price if resting, otherwise a dash
 const pxCell=o=>o.fp>0?o.fp.toFixed(2):o.px>0?o.px.toFixed(2):'-';
+const qtyTxt=(q,sym)=>{const l=inst(sym).lot||1;return q.toLocaleString('en-IN')+(l>1&&q%l===0?' <span class="mute">('+(q/l)+'L)</span>':'')};
+function tLabel(){const i=inst($('#tSym').value),l=i.lot||1;$('#tQtyL').textContent=l>1?'Lots (1 lot = '+l+' units)':'Quantity'}
 function order(side){
-  const s=$('#tSym').value,type=$('#tType').value,q=Math.floor(+$('#tQty').value),px=+$('#tPx').value,m=$('#tMsg');
-  if(!(q>=1)){m.textContent='Enter a quantity of 1 or more.';m.className='note dn';return}
+  const s=$('#tSym').value,type=$('#tType').value,n=Math.floor(+$('#tQty').value),px=+$('#tPx').value,m=$('#tMsg'),l=inst(s).lot||1;
+  if(!API){m.textContent='Engine not running: no orders can be placed.';m.className='note dn';return}
+  if(!(n>=1)){m.textContent=l>1?'Enter 1 lot or more.':'Enter a quantity of 1 or more.';m.className='note dn';return}
   if(type==='LIMIT'&&!(px>0)){m.textContent='Enter a limit price for a LIMIT order.';m.className='note dn';return}
-  if(API){post('order',{sym:s,side,type,qty:q,px:type==='LIMIT'?px:0}).then(r=>{m.innerHTML=r.ok?'Simulated order accepted by the C++ engine.':'Rejected: '+H(r.why)+'.'+(FUNDABLE.includes(r.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':r.code==='KILL_SWITCH'?' <button class="btn sm arm" data-act="rearm">Re-arm</button>':'');m.className='note '+(r.ok?'up':'dn');poll()});return}
-  const why=submit(s,side,type,q,px);
-  m.textContent=why?'Risk engine rejected the order: '+why+'.':'Simulated order accepted.';m.className='note '+(why?'dn':'up');render();
+  post('order',{sym:s,side,type,qty:n*l,px:type==='LIMIT'?px:0}).then(r=>{m.innerHTML=r.ok?'Simulated order accepted by the C++ engine.':'Rejected: '+H(r.why)+'.'+(FUNDABLE.includes(r.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':r.code==='KILL_SWITCH'?' <button class="btn sm arm" data-act="rearm">Re-arm</button>':'');m.className='note '+(r.ok?'up':'dn');poll()});
 }
+function setMedia(on){$('#v-terminal').classList.toggle('nomedia',!on);$('#mediaBtn').classList.toggle('pri',!on);$('#mediaBtn').textContent=on?'MEDIA ▸':'◂ MEDIA'+(NEWS?' · '+NEWS.items.filter(x=>x.tag==='ADVERSE').length+' ADVERSE':'')}
+const need=()=>{if(!API){modal('Engine not running','<p>The terminal needs the C++ engine. Start the Codespace (it runs scripts/serve.sh).</p>','OK',()=>{});return false}return true};
 const ACT={
   killOrArm:()=>S.killed?ACT.rearm():ACT.kill(),
   buy:()=>order('BUY'),sell:()=>order('SELL'),mNo:closeM,
-  stub:()=>{if(API){post('stub',{on:!stub}).then(poll);return}stub=!stub;log('AI STUB','Stub signals '+(stub?'started':'stopped')+' by GJ');render()},
-  kill:()=>modal('Activate kill switch?','<p>Cancels every open simulated order and blocks all new orders, including AI orders, until you press RE-ARM (same button, top right).</p><label style="display:flex;gap:8px;align-items:center"><input id="kFlat" type="checkbox" style="width:auto"> Also flatten all positions</label>','Activate kill switch',()=>{const f=$('#kFlat').checked;if(API){post('kill',{flatten:f}).then(poll);return}if(f)flatten();else cancelAll();S.killed=true;stub=false;log('KILL SWITCH','Activated by GJ'+(f?' with flatten':''))}),
-  cancelAll:()=>modal('Cancel all open orders?','<p>'+openOrd().length+' open simulated order(s) will be cancelled.</p>','Cancel all orders',()=>{if(API){post('cancel_all').then(poll);return}cancelAll()}),
-  flatten:()=>modal('Flatten all positions?','<p>Closes '+Object.keys(S.pos).length+' simulated position(s) at market and cancels open orders.</p>','Flatten all',()=>{if(API){post('flatten').then(poll);return}flatten()}),
-  rearm:()=>modal('Re-arm the system?','<p>Clears the kill switch so new orders are accepted again.</p>'+(S.halt?'<p class="dn">The daily loss halt stays on until the next trading day. It is a hard limit and re-arming does not clear it.</p>':'')+(S.lock?'<p class="warn">The +10% profit lockout stays on until the next trading day.</p>':''),'Re-arm',()=>{if(API){post('rearm').then(poll);return}S.killed=false;log('RE-ARM','Kill switch cleared by GJ')}),
-  reset:()=>modal('Reset demo account?','<p>Clears all simulated orders, positions and the ledger, and restores the opening demo balance of '+inr(START)+'.</p>','Reset demo account',()=>{if(API){post('reset').then(poll);return}fresh();stub=false;log('RESET','Demo account reset')}),
-  fund:()=>modal('Fund demo wallet','<p class="mute">Demo money only. No payment is taken.</p><label class="f" for="fAmt">Amount (₹)<input id="fAmt" type="number" min="1" value="50000"></label><div class="row" style="margin-top:6px">'+[10000,50000,100000,500000].map(a=>'<button class="btn sm" data-amt="'+a+'">'+inr(a)+'</button>').join('')+'</div><p class="note dn" id="fErr"></p>','Add demo funds',()=>{const a=+$('#fAmt').value;if(!(a>0)){$('#fErr').textContent='Enter an amount above zero.';return false}if(API){post('fund',{amount:a}).then(poll);return}S.cash+=a;S.dep+=a;S.ledger.unshift({t:now(),k:'DEMO FUNDING',a,b:base()});log('WALLET','Demo wallet funded with '+inr(a))})
+  stub:()=>{if(need())post('stub',{on:!stub}).then(poll)},
+  media:()=>setMedia($('#v-terminal').classList.contains('nomedia')),
+  restart:()=>{if(need())post('restart').then(r=>{if(!r.ok)modal('Cannot restart the replay',H(r.why)+'.','OK',()=>{});poll()})},
+  closeSel:()=>{if(!SELL.size||!need())return;const ids=[...SELL];modal('Close '+ids.length+' position(s)?','<p>Each selected position is closed at market by its own sell order. At most 8 actions per second; extra closes wait in the queue.</p>','Close '+ids.length,()=>{post('close',{ids:ids.join(',')}).then(poll);SELL.clear()})},
+  kill:()=>{if(need())modal('Activate kill switch?','<p>Blocks every new order at once (yours and AI), cancels all open orders and closes every position at market. At most 8 actions per second, so many items take a few seconds. Stays on until you press RE-ARM.</p>','Activate kill switch',()=>{post('kill').then(poll)})},
+  cancelAll:()=>{if(need())modal('Cancel all open orders?','<p>'+openOrd().length+' open simulated order(s) will be cancelled (8 per second).</p>','Cancel all orders',()=>{post('cancel_all').then(poll)})},
+  flatten:()=>{if(need())modal('Flatten all positions?','<p>Cancels open orders and closes all '+(S.lots||[]).length+' position(s) at market, 8 actions per second. Stub signals stop.</p>','Flatten all',()=>{post('flatten').then(poll)})},
+  rearm:()=>modal('Re-arm the system?','<p>Clears the kill switch so new orders are accepted again.</p>'+(S.halt?'<p class="dn">The daily loss halt stays on until the next trading day. It is a hard limit and re-arming does not clear it.</p>':'')+(S.lock?'<p class="warn">The +10% profit lockout stays on until the next trading day.</p>':''),'Re-arm',()=>{post('rearm').then(poll)}),
+  reset:()=>modal('Reset demo account?','<p>Clears all simulated orders, positions and the ledger, restores the opening demo balance of '+inr(START())+' and restarts the replay at 09:15.</p>','Reset demo account',()=>{if(need())post('reset').then(poll)}),
+  fund:()=>modal('Fund demo wallet','<p class="mute">Demo money only. No payment is taken.</p><label class="f" for="fAmt">Amount (₹)<input id="fAmt" type="number" min="1" value="50000"></label><div class="row" style="margin-top:6px">'+[10000,50000,100000,500000].map(a=>'<button class="btn sm" data-amt="'+a+'">'+inr(a)+'</button>').join('')+'</div><p class="note dn" id="fErr"></p>','Add demo funds',()=>{const a=+$('#fAmt').value;if(!(a>0)){$('#fErr').textContent='Enter an amount above zero.';return false}if(!need())return;post('fund',{amount:a}).then(poll)})
 };
 /* C++ engine link: when served by mc_server the terminal is a thin client of the engine */
 const post=(p,b)=>fetch('api/'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(r=>r.json()).catch(()=>({ok:false,why:'Engine not reachable'}));
 const hms=w=>new Date(w).toLocaleTimeString('en-GB');
 function applyState(j){
-  if(I.length!==j.inst.length||I.some((x,k)=>x.s!==j.inst[k].s)){I.length=0;j.inst.forEach(x=>I.push({s:x.s,v:x.v,p:x.p,o:x.o,t:x.t,lot:x.lot,src:x.src}));$('#tSym').innerHTML=I.map(i=>'<option>'+i.s+'</option>').join('');if(S.sel>=I.length)S.sel=0}
-  else j.inst.forEach((x,k)=>{I[k].p=x.p;I[k].o=x.o});
-  const srcs=[...new Set(j.inst.map(x=>x.src))];const real=j.inst.find(x=>/^NSE close/.test(x.src||''));
-  $('#wlSrc').textContent=real?'CLOSE '+new Date(real.src.split(' ')[2]+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short'}).toUpperCase()+' + SIM':'PLACEHOLDER';$('#wlSrc').title='Starting prices: '+srcs.join('; ')+'. Chg is measured from the starting price. Ticks after it are synthetic.';
-  Object.assign(S,{cash:j.cash,dep:j.dep,real:j.real,fees:j.fees,turn:j.turn,killed:j.killed,halt:j.halt?'Daily loss limit hit':'',lock:j.lock,rate:j.rate,curve:j.curve,book:j.book});
-  S.orders=j.orders.map(o=>({id:o.id,t:hms(o.w),src:o.src,side:o.side,q:o.q,s:o.s,type:o.type,px:o.px||null,fp:o.fp||0,st:o.st,why:o.why,code:o.code}));
+  if(I.length!==j.inst.length||I.some((x,k)=>x.s!==j.inst[k].s)){I.length=0;j.inst.forEach(x=>I.push(Object.assign({},x)));$('#tSym').innerHTML=I.map(i=>'<option>'+H(i.s)+'</option>').join('');if(S.sel>=I.length)S.sel=0;tLabel()}
+  else j.inst.forEach((x,k)=>Object.assign(I[k],x));
+  const rp=j.replay||{};RP=rp;
+  $('#wlSrc').textContent=rp.has?(rp.closed?'CLOSED · ':'REPLAY · ')+new Date(rp.date+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short'}).toUpperCase()+' '+mtx(rp.mt):'NO DAY DATA';
+  $('#wlSrc').className='pill '+(rp.has?(rp.closed?'lock':'sim'):'bad');
+  $('#wlSrc').title=rp.has?'Replay of NSE trading day '+rp.date+'. Open, high, low and close are the official NSE prices; the order of high and low and all moves between them are simulated. Market time 09:15 to 15:30.':'No NSE day data was loaded: prices are placeholders and do not move.';
+  if(document.activeElement!==$('#spd'))$('#spd').value=String(rp.speed);
+  Object.assign(S,{start:j.start,cash:j.cash,dep:j.dep,real:j.real,fees:j.fees,turn:j.turn,killed:j.killed,halt:j.halt?'Daily loss limit hit':'',lock:j.lock,rate:j.rate,rate_max:j.rate_max,queued:j.queued,curve:j.curve,book:j.book});
+  S.orders=j.orders.map(o=>({id:o.id,t:tms(o.ns)!=='-'?tms(o.ns):hms(o.w),ns:o.ns,mt:o.mt,src:o.src,side:o.side,q:o.q,f:o.f,s:o.s,type:o.type,px:o.px||null,fp:o.fp||0,st:o.st,why:o.why,code:o.code,lot:o.lot}));
+  S.lots=j.lots||[];
   S.pos={};j.pos.forEach(p=>{S.pos[p.s]={q:p.q,avg:p.avg}});
   S.audit=j.audit.map(e=>({t:hms(e.w),k:e.k,m:e.m}));
   S.ledger=j.ledger.map(e=>({t:hms(e.w),k:e.k,a:e.a,b:e.b}));
@@ -571,18 +549,19 @@ function applyState(j){
 async function poll(){try{const r=await fetch('api/state?sel='+S.sel,{cache:'no-store'});if(!r.ok)return;applyState(await r.json());render()}catch(e){}}
 async function initApi(){
   try{const r=await fetch('api/state',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(j.engine!=='cpp')return;
-    API=true;clearInterval(timer);applyState(j);
-    document.querySelector('.simband').textContent='SIMULATION · C++ ENGINE · DEMO ACCOUNT · SYNTHETIC TICKS · SAMPLE NEWS · NO REAL MONEY · NO BROKER';
-    render();setInterval(poll,1000);setInterval(()=>{if(++tk%6===0)pushNews()},1000)}catch(e){}
+    API=true;applyState(j);
+    document.querySelector('.simband').textContent='SIMULATION · C++ ENGINE · DEMO ACCOUNT · REPLAY OF A REAL NSE DAY (INTRADAY PATH SIMULATED) · '+(NEWS?'LIVE NEWS (NSE FILINGS)':'SAMPLE NEWS')+' · NO REAL MONEY · NO BROKER';
+    render();setInterval(poll,1000)}catch(e){render()}
 }
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-act],[data-sel],[data-cx],[data-st],[data-amt],[data-node],[data-open],[data-flt]');if(!t)return;
+  if(e.target.id==='ckAll'){(S.lots||[]).forEach(l=>{if(!l.c){if(e.target.checked)SELL.add(l.id);else SELL.delete(l.id)}});render();return}
+  const t=e.target.closest('[data-act],[data-sel],[data-cx],[data-close],[data-ck],[data-amt],[data-node],[data-open],[data-flt]');if(!t)return;
   const d=t.dataset;
   if(d.act)ACT[d.act]();
   else if(d.sel){S.sel=+d.sel;$('#tSym').value=I[S.sel].s;render();if(API)poll()}
   else if(d.cx&&API){post('cancel',{id:d.cx}).then(poll)}
-  else if(d.cx){const o=S.orders.find(x=>x.id===d.cx);if(o&&o.st==='ACKED'){o.st='CANCELLED';S.stamps.push(Date.now());log('CANCEL',o.id+' cancelled');render()}}
-  else if(d.st){const x=STR[+d.st];x.on=!x.on;log('STRATEGY',x.n+(x.on?' enabled':' disabled')+' in SIM');render()}
+  else if(d.close&&API){post('close',{ids:d.close}).then(poll)}
+  else if(d.ck){if(t.checked)SELL.add(d.ck);else SELL.delete(d.ck);render()}
   else if(d.amt){$('#fAmt').value=d.amt}
   else if(d.node!==undefined){C.pick=+d.node;renderWeb()}
   else if(d.open){C.isin=d.open;C.pick=null;C.filter='all';$('#cQ').value='';renderWeb()}
@@ -615,7 +594,6 @@ async function loadReports(){
   $('#rep').innerHTML=h;
 }
 loadReports();
-log('SYSTEM','Preview started in SIMULATION mode with '+inr(START)+' demo funds');
 for(let k=0;k<4;k++)pushNews();
 loadNews();setInterval(loadNews,30000);
 /* live business TV: official YouTube live streams of channels verified by tools/check_channels.py */
@@ -628,16 +606,21 @@ function playTv(id){
   try{localStorage.setItem('mc_tv',id)}catch(e){}
 }
 async function loadTv(){
-  try{const r=await fetch('data/channels.json',{cache:'no-store'});if(!r.ok)return;const j=await r.json();TV=j.channels||[];if(!TV.length)return;
-    $('#chan').innerHTML=TV.map(c=>'<option value="'+H(c.id)+'">'+(c.live?'● ':'○ ')+H(c.name)+' · '+H(c.region)+(c.lang!=='English'?' · '+H(c.lang):'')+(c.live?'':' (not live when checked)')+'</option>').join('');
+  const again=()=>{$('#tvMsg').textContent='Channel list not ready yet (it is checked when the Codespace starts). Retrying…';setTimeout(loadTv,15000)};
+  try{const r=await fetch('data/channels.json',{cache:'no-store'});if(!r.ok)return again();const j=await r.json();TV=j.channels||[];if(!TV.length)return again();
+    $('#chan').innerHTML=TV.map(c=>'<option value="'+H(c.id)+'">'+(c.live===true?'● ':'○ ')+H(c.name)+' · '+H(c.region)+(c.lang!=='English'?' · '+H(c.lang):'')+(c.live===true?'':c.live===false?' (not live when checked)':' (live status unknown)')+'</option>').join('');
     let pick='';try{pick=localStorage.getItem('mc_tv')||''}catch(e){}
     if(!TV.some(c=>c.id===pick))pick=(TV.find(c=>c.live)||TV[0]).id;
-    $('#chan').value=pick;$('#chan').title='Checked '+j.checked+'. ● = live when checked. If a channel does not allow playback inside other sites, YouTube shows a message here: use Open on YouTube.';
+    $('#chan').value=pick;$('#chan').title='Checked '+j.checked+(j.rechecked<TV.length?' ('+(TV.length-j.rechecked)+' channel names not re-checked from this machine; names as verified on '+j.verified_on+')':'')+'. ● = live when checked. If a channel does not allow playback inside other sites, YouTube shows a message here: use Open on YouTube.';
     playTv(pick)}catch(e){}
 }
 $('#chan').addEventListener('change',e=>playTv(e.target.value));
 loadTv();
-render();timer=setInterval(tick,1000);initApi();
+$('#tSym').addEventListener('change',tLabel);
+$('#spd').addEventListener('change',e=>{if(need())post('speed',{x:e.target.value}).then(poll)});
+/* adverse media: shown on load, hidden after 8 seconds; the MEDIA button opens it again. Hidden != stopped. */
+setTimeout(()=>setMedia(false),8000);
+render();initApi();
 </script>
 </body>
 </html>

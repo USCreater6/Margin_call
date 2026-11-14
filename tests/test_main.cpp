@@ -174,13 +174,15 @@ static void test_risk() {
     int ok = 0;
     for (int i = 0; i < 20; ++i) ok += r.check(mk(Side::Buy, 1), c, 0) == Reject::None;
     CHECK(ok == 8);
-    CHECK(r.check(mk(Side::Buy, 1), c, 124000000) == Reject::RateLimit);   // 0.124 s later: still none
-    CHECK(r.check(mk(Side::Buy, 1), c, 126000000) == Reject::None);        // 0.126 s later: one token back
+    CHECK(r.check(mk(Side::Buy, 1), c, 126000000) == Reject::RateLimit);   // strict window: 8 already in this second
+    CHECK(r.check(mk(Side::Buy, 1), c, 999999999) == Reject::RateLimit);
+    CHECK(r.check(mk(Side::Buy, 1), c, 1000000000) == Reject::None);       // one full second after the first
     ok = 0;
     for (int i = 0; i < 20; ++i) ok += r.check(mk(Side::Buy, 1), c, 5000000000LL) == Reject::None;
     CHECK(ok == 8);                                                        // never more than the burst
     for (int i = 0; i < 5; ++i) r.check(mk(Side::Buy, 251), c, 5000000000LL);   // vetoed orders use no token
-    CHECK(r.check(mk(Side::Buy, 1), c, 5125000001LL) == Reject::None);
+    CHECK(r.check(mk(Side::Buy, 1), c, 5999999999LL) == Reject::RateLimit);
+    CHECK(r.check(mk(Side::Buy, 1), c, 6000000000LL) == Reject::None);
   }
 }
 
@@ -440,7 +442,7 @@ static void test_session_risk_controls() {
   { LiveSim s = make_sim();                                                         // kill switch and flatten
     s.submit(0, Side::Buy, OrdType::Market, 2, 0, "MANUAL", 0);
     s.submit(1, Side::Buy, OrdType::Limit, 1, 40000, "MANUAL", 0);
-    s.kill(true, sec);
+    s.kill(sec);
     CHECK(s.killed() && s.position(0).qty == 0 && s.live_orders() == 0);
     CHECK(!s.submit(0, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 2 * sec).empty());
     s.rearm(); CHECK(!s.killed());
@@ -477,6 +479,10 @@ static void test_session_long_only_and_cash() {
   const auto& r = f.orders().back();
   CHECK(r.o.filled == 20 && r.avg_fill() >= 1000.10 && std::fabs(r.avg_fill() - f.position(0).avg) < 1e-9);
 }
+static LiveSim::Day day_aaa() {   // a day for AAA: open 1000, high 1030, low 990, close 1020, prev close 995
+  LiveSim::Day d; d.date = "2026-11-13"; d.o = 100000; d.h = 103000; d.l = 99000; d.c = 102000; d.pc = 99500;
+  d.vol_units = 4500000; d.vol_note = "units"; return d;
+}
 static void test_session_soak() {   // long random run: accounting must stay consistent
   LiveSim s = make_sim();
   s.set_stub(true);
@@ -488,6 +494,15 @@ static void test_session_soak() {   // long random run: accounting must stay con
   CHECK(s.position(0).qty >= 0 && s.position(1).qty >= 0);    // long-only
   CHECK(s.cash() >= -1e-6);                                    // no leverage
   CHECK(std::isfinite(s.equity()) && s.equity() > 0);
+  // with a replayed day, the stub, stops and exits: lots must always add up to the position, cash never negative
+  LiveSim r = make_sim(); r.set_day(0, day_aaa()); r.set_speed(25); r.set_stub(true);
+  int mism = 0;
+  for (int i = 1; i <= 2000; ++i) {
+    r.step(static_cast<Ts>(i) * 1000000000LL);
+    if (i % 97 == 0) { std::vector<OrderId> ids; for (const auto& l : r.lots()) if (l.qty > 0) ids.push_back(l.id); r.close_lots(ids, "MANUAL", static_cast<Ts>(i) * 1000000000LL); }
+    for (std::size_t k = 0; k < 2; ++k) { Qty sum = 0; for (const auto& l : r.lots()) if (l.inst == k) sum += l.qty; mism += sum != r.position(k).qty; }
+  }
+  CHECK(mism == 0 && r.cash() >= -1e-6 && r.position(0).qty >= 0);
   const std::string j = s.state_json(0, 5001LL * 1000000000LL);
   CHECK(j.front() == '{' && j.back() == '}' && j.find("\"engine\":\"cpp\"") != std::string::npos);
 }
@@ -559,6 +574,82 @@ static void test_meanrev_uptrend() {
   CHECK(run_backtest(d, b, cfg).orders == 0);
 }
 
+// 14 Nov: replay of the real day instead of a random loop; session ends at the official close.
+static void test_session_replay() {
+  const Ts sec = 1000000000LL;
+  LiveSim s = make_sim();
+  CHECK(s.set_day(0, day_aaa()));
+  CHECK(s.price(0) == 100000);                                   // starts at the official open
+  Price lo = s.price(0), hi = s.price(0);
+  CHECK(s.set_speed(25));
+  for (int k = 1; k <= 900; ++k) {                               // 900 s at 25x = 22,500 market seconds
+    s.step(static_cast<Ts>(k) * sec);
+    lo = std::min(lo, s.price(0)); hi = std::max(hi, s.price(0));
+  }
+  CHECK(s.market_closed() && s.price(0) == 102000);              // ends at the official close
+  CHECK(lo == 99000 && hi == 103000);                            // touches the official low and high, never beyond
+  CHECK(s.price(1) == 50000);                                    // no day data: price held, not a random walk
+  CHECK(!s.submit(0, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 901 * sec).empty());
+  CHECK(s.orders().back().code == "MARKET_CLOSED");
+  CHECK(!s.set_speed(3) && s.set_speed(6.25));
+  CHECK(s.restart_replay().empty() && s.price(0) == 100000 && !s.market_closed());
+  LiveSim t = make_sim(); t.set_day(0, day_aaa());               // same day, same path
+  s.set_speed(1); t.set_speed(1);
+  for (int k = 1; k <= 50; ++k) { s.step(static_cast<Ts>(1000 + k) * sec); t.step(static_cast<Ts>(k) * sec); }
+  CHECK(s.price(0) == t.price(0));
+}
+// 14 Nov: every buy is its own lot with a timestamp; lots close one by one; depth from the day's volume.
+static void test_session_lots() {
+  const Ts sec = 1000000000LL;
+  RiskLimits lim; lim.max_order_notional = 0;                    // terminal setting: order-value rule removed
+  LiveSim s(10000000.0, lim, 7);
+  s.add_instrument("AAA", "TEST", 100000, 10);
+  s.set_day(0, day_aaa());
+  s.set_wall_ns(1763000000123456789LL);
+  CHECK(s.submit(0, Side::Buy, OrdType::Market, 389, 0, "MANUAL", 0).empty());   // 389 > old 25%-of-1-lakh limit; deep book
+  CHECK(s.position(0).qty == 389);
+  s.set_wall_ns(1763000001000000001LL);
+  CHECK(s.submit(0, Side::Buy, OrdType::Market, 100, 0, "MANUAL", 0).empty());
+  int open = 0; for (const auto& l : s.lots()) open += l.qty > 0;
+  CHECK(open == 2 && s.lots()[0].ns == 1763000000123456789LL && s.lots()[1].ns == 1763000001000000001LL);
+  CHECK(s.close_lots({s.lots()[0].id}, "MANUAL", sec) == 1);
+  CHECK(s.lots()[0].qty == 0 && s.lots()[1].qty == 100 && s.position(0).qty == 100);
+  CHECK(s.orders().back().lot == s.lots()[0].id && s.orders().back().o.filled == 389);
+  CHECK(s.close_lots({s.lots()[0].id}, "MANUAL", sec) == 0);     // already closed
+  // a queued exit counts as a sell: the ticket cannot sell the same units again (no short)
+  LiveSim q(10000000.0, lim, 7); q.add_instrument("AAA", "TEST", 100000, 10); q.set_day(0, day_aaa());
+  for (int k = 0; k < 8; ++k) q.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 0);   // uses all 8 tokens
+  std::vector<OrderId> ids; for (const auto& l : q.lots()) ids.push_back(l.id);
+  CHECK(q.close_lots(ids, "MANUAL", 0) == 8 && q.queued() == 8); // no token left in this instant: all wait
+  CHECK(!q.submit(0, Side::Sell, OrdType::Market, 10, 0, "MANUAL", 0).empty());
+  q.pump(sec / 2); CHECK(q.queued() == 8);                      // strict: 8 already sent in this second
+  q.pump(sec); CHECK(q.queued() == 0 && q.position(0).qty == 0 && q.actions_last_second(sec) == 8);
+  // lot size: NIFTY-style 65 units per lot
+  LiveSim f(100000000.0, lim, 7); f.add_instrument("FUT", "TEST", 2500000, 10, "test", 65);
+  CHECK(!f.submit(0, Side::Buy, OrdType::Market, 100, 0, "MANUAL", 0).empty() && f.orders().back().code == "LOT_SIZE");
+  CHECK(f.submit(0, Side::Buy, OrdType::Market, 130, 0, "MANUAL", 0).empty() && f.position(0).qty == 130);
+}
+// 14 Nov screenshots: after KILL and Flatten positions kept running. Kill now closes everything, at 8 per second.
+static void test_session_kill_flattens() {
+  const Ts sec = 1000000000LL;
+  RiskLimits lim; lim.max_order_notional = 0;
+  LiveSim s(10000000.0, lim, 7);
+  s.add_instrument("AAA", "TEST", 100000, 10); s.add_instrument("BBB", "TEST", 50000, 10);
+  s.set_day(0, day_aaa());
+  for (int k = 0; k < 6; ++k) s.submit(0, Side::Buy, OrdType::Market, 50, 0, "MANUAL", k * sec);   // 6 lots
+  for (int k = 0; k < 4; ++k) s.submit(1, Side::Buy, OrdType::Limit, 1, 40000 + 10 * k, "MANUAL", 7 * sec);   // 4 resting
+  s.kill(10 * sec);                                              // 10 actions: 8 now, 2 one second later
+  CHECK(s.killed() && s.queued() == 2 && s.actions_last_second(10 * sec) == 8);
+  CHECK(!s.submit(0, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 10 * sec).empty());
+  s.pump(10 * sec + sec / 2); CHECK(s.queued() == 2);
+  s.pump(11 * sec);
+  CHECK(s.queued() == 0 && s.live_orders() == 0 && s.position(0).qty == 0 && s.position(1).qty == 0);
+  bool done = false; for (const auto& e : s.events()) done = done || (e.k == "KILL SWITCH" && e.m.rfind("Complete", 0) == 0);
+  CHECK(done);
+  for (int k = 0; k < 30; ++k) s.step((11 + k) * sec);            // nothing moves the account any more
+  NEAR(s.equity(), s.cash());
+}
+
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -574,6 +665,9 @@ int main() {
       {"session: long-only, open orders, cash, average fill", test_session_long_only_and_cash},
       {"strategy: index regime filter", test_regime_filter}, {"strategy: rotation", test_rotation},
       {"strategy: mean reversion uptrend-only", test_meanrev_uptrend},
+      {"session: replay of the real day (open, high, low, close)", test_session_replay},
+      {"session: one lot per order, close lots, 8 actions per second, lot size", test_session_lots},
+      {"session: kill closes every order and position", test_session_kill_flattens},
   };
   int failed_tests = 0;
   for (const T& t : tests) {

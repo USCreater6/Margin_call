@@ -25,9 +25,11 @@ namespace {
 Ts mono_ns() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-std::int64_t wall_ms() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+std::int64_t wall_ns() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
+std::int64_t wall_ms() { return wall_ns() / 1000000LL; }
+Price paise(const std::string& s) { return static_cast<Price>(std::llround(std::atof(s.c_str()) * 100.0)); }
 // Reads the value of a top-level key from a flat JSON object. Enough for this API's small bodies.
 std::string jget(const std::string& body, const std::string& key) {
   const std::string k = "\"" + key + "\"";
@@ -87,8 +89,9 @@ bool url_decode(const std::string& in, std::string& out) {
   return true;
 }
 std::string lower(std::string s) { for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; }
-// Instruments file written by tools/fetch_latest.py:
-// symbol,venue,price,tick,lot,source   (price and tick in rupees). Lines starting with # are comments.
+// Instruments file written by tools/fetch_latest.py. Lines starting with # are comments.
+// symbol,venue,price,tick,lot,source[,date,open,high,low,close,prev_close,volume_units,volume_check]
+// Prices in rupees. With the day columns, the session replays that NSE trading day.
 int load_instruments(LiveSim& sim, const std::string& path) {
   std::ifstream f(path);
   std::string line;
@@ -96,17 +99,33 @@ int load_instruments(LiveSim& sim, const std::string& path) {
   while (std::getline(f, line)) {
     if (line.empty() || line[0] == '#' || line.rfind("symbol,", 0) == 0) continue;
     std::stringstream ss(line);
-    std::string c[6];
-    for (int k = 0; k < 6 && std::getline(ss, c[k], ','); ++k) {}
+    std::vector<std::string> c;
+    for (std::string x; std::getline(ss, x, ',');) c.push_back(x);
+    if (c.size() < 6) { std::fprintf(stderr, "instruments: skipped short row: %s\n", line.c_str()); continue; }
     const double px = std::atof(c[2].c_str()), tick = std::atof(c[3].c_str());
     const long long lot = std::atoll(c[4].c_str());
     if (c[0].empty() || !(px > 0) || !(tick > 0)) { std::fprintf(stderr, "instruments: skipped bad row: %s\n", line.c_str()); continue; }
     const Price t = static_cast<Price>(std::llround(tick * 100.0));
     const Price p = std::max<Price>(t, static_cast<Price>(std::llround(px * 100.0 / static_cast<double>(t))) * t);
     sim.add_instrument(c[0], c[1], p, t, c[5], lot > 0 ? lot : 1);
+    if (c.size() >= 13) {
+      LiveSim::Day d;
+      d.date = c[6]; d.o = paise(c[7]); d.h = paise(c[8]); d.l = paise(c[9]); d.c = paise(c[10]); d.pc = paise(c[11]);
+      d.vol_units = std::atof(c[12].c_str()); d.vol_note = c.size() >= 14 ? c[13] : "";
+      if (!sim.set_day(sim.instruments() - 1, d)) std::fprintf(stderr, "instruments: day data rejected for %s\n", c[0].c_str());
+    }
     ++n;
   }
   return n;
+}
+std::vector<OrderId> parse_ids(const std::string& list) {
+  std::vector<OrderId> out;
+  std::stringstream ss(list);
+  for (std::string x; std::getline(ss, x, ',');) {
+    const std::size_t d = x.find_first_of("0123456789");
+    if (d != std::string::npos) out.push_back(static_cast<OrderId>(std::atoll(x.c_str() + d)));
+  }
+  return out;
 }
 }  // namespace
 
@@ -122,8 +141,10 @@ int main(int argc, char** argv) {
   }
   std::signal(SIGPIPE, SIG_IGN);
 
-  LiveSim sim(100000.0, RiskLimits{}, static_cast<std::uint64_t>(wall_ms()));
-  sim.set_wall(wall_ms());
+  RiskLimits lim;
+  lim.max_order_notional = 0;   // removed by the owner on 14 Nov 2026 (cash, gross 100% and the other limits stay)
+  LiveSim sim(100000.0, lim, static_cast<std::uint64_t>(wall_ms()));
+  sim.set_wall_ns(wall_ns());
   int loaded = load_instruments(sim, instruments);
   if (!loaded && !data.empty() && std::filesystem::exists(data)) {
     std::vector<std::string> files;
@@ -144,8 +165,6 @@ int main(int argc, char** argv) {
     sim.add_instrument("RELIANCE", "NSE", 140000, 10);
     sim.add_instrument("HDFCBANK", "NSE", 100000, 10);
     sim.add_instrument("TCS", "NSE", 300000, 10);
-    sim.add_instrument("GOLDM", "MCX", 10000000, 100);
-    sim.add_instrument("CRUDEOIL", "MCX", 600000, 100);
   }
 
   const int ls = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -156,7 +175,7 @@ int main(int argc, char** argv) {
   if (::inet_pton(AF_INET, bind_addr.c_str(), &a.sin_addr) != 1) { std::fprintf(stderr, "bad bind address\n"); return 2; }
   if (::bind(ls, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || ::listen(ls, 16) != 0) { std::perror("bind/listen"); return 2; }
   std::printf("Margin_call terminal (SIMULATION) on http://%s:%d  instruments: %zu (%s)\n", bind_addr.c_str(), port, sim.instruments(),
-              loaded ? "starting prices from data files; ticks are synthetic" : "PLACEHOLDER prices; ticks are synthetic");
+              loaded ? "from data files" : "PLACEHOLDER prices, held flat");
   std::fflush(stdout);
 
   Ts next_tick = mono_ns() + 1000000000LL;
@@ -164,7 +183,9 @@ int main(int argc, char** argv) {
     pollfd p{ls, POLLIN, 0};
     ::poll(&p, 1, 100);
     Ts now = mono_ns();
-    while (now >= next_tick) { sim.set_wall(wall_ms()); sim.step(next_tick); next_tick += 1000000000LL; }
+    sim.set_wall_ns(wall_ns());
+    while (now >= next_tick) { sim.step(next_tick); next_tick += 1000000000LL; }
+    sim.pump(now);   // queued cancels and exits go out as rate tokens free up (8 per second)
     if (!(p.revents & POLLIN)) continue;
     const int fd = ::accept(ls, nullptr, nullptr);
     if (fd < 0) continue;
@@ -195,7 +216,7 @@ int main(int argc, char** argv) {
     std::string path = target, query;
     if (const auto q = target.find('?'); q != std::string::npos) { path = target.substr(0, q); query = target.substr(q + 1); }
     now = mono_ns();
-    sim.set_wall(wall_ms());
+    sim.set_wall_ns(wall_ns());
 
     if (path == "/api/state") {
       std::size_t sel = 0;
@@ -221,7 +242,12 @@ int main(int argc, char** argv) {
         out = (d != std::string::npos && sim.cancel(static_cast<OrderId>(std::atoll(id.c_str() + d)), now)) ? ok() : ok("Order is not open");
       } else if (path == "/api/cancel_all") sim.cancel_all(now);
       else if (path == "/api/flatten") sim.flatten(now);
-      else if (path == "/api/kill") sim.kill(jget(body, "flatten") == "true", now);
+      else if (path == "/api/kill") sim.kill(now);
+      else if (path == "/api/close") {
+        const auto ids = parse_ids(jget(body, "ids"));
+        out = ids.empty() ? ok("Select at least one position") : sim.close_lots(ids, "MANUAL", now) ? ok() : ok("Already closing or closed");
+      } else if (path == "/api/speed") out = sim.set_speed(std::atof(jget(body, "x").c_str())) ? ok() : ok("Speed must be 0, 1, 2, 6.25, 12.5 or 25");
+      else if (path == "/api/restart") { const std::string w = sim.restart_replay(); out = ok(w, w.empty() ? "" : "NOT_FLAT"); }
       else if (path == "/api/rearm") sim.rearm();
       else if (path == "/api/reset") sim.reset();
       else if (path == "/api/fund") out = sim.fund(std::atof(jget(body, "amount").c_str())) ? ok() : ok("Enter an amount above zero");

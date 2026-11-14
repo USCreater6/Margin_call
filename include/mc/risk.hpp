@@ -1,6 +1,7 @@
 // Central risk engine. Every order from every strategy passes check() before it reaches a venue.
 #pragma once
 #include <algorithm>
+#include <deque>
 #include <limits>
 #include "mc/types.hpp"
 
@@ -11,7 +12,7 @@ struct RiskLimits {
   double profit_lock = 0.10;         // daily profit lockout (fixed by owner)
   double daily_loss = 0.03;          // global daily loss limit (approved proposal)
   double strat_daily_loss = 0.015;   // per-strategy daily loss, fraction of account equity
-  double max_order_notional = 0.25;  // of equity
+  double max_order_notional = 0.25;  // of equity; 0 = rule off (terminal: removed by the owner, 14 Nov 2026)
   double max_gross = 1.0;            // of equity; 1.0 = no leverage
   int max_positions = 3;
   int max_open_orders = 6;
@@ -35,24 +36,20 @@ inline const char* to_string(Reject r) {
   return "?";
 }
 
-// Token bucket on an injected clock, so it is deterministic in simulation.
+// Rate limiter on an injected clock (deterministic in simulation): at most `rate_per_sec` actions in ANY
+// rolling one-second window. Strict sliding window, so no burst can ever exceed the cap.
 class TokenBucket {
  public:
-  TokenBucket(int rate_per_sec, int burst)
-      : rate_(rate_per_sec), cap_(burst), tokens_(burst) {}
+  TokenBucket(int rate_per_sec, int /*burst*/) : cap_(rate_per_sec > 0 ? static_cast<std::size_t>(rate_per_sec) : 1) {}
   bool take(Ts now_ns) {
-    if (!init_) { last_ = now_ns; init_ = true; }
-    if (now_ns > last_) {
-      tokens_ = std::min(cap_, tokens_ + static_cast<double>(now_ns - last_) * 1e-9 * rate_);
-      last_ = now_ns;
-    }
-    if (tokens_ >= 1.0) { tokens_ -= 1.0; return true; }
-    return false;
+    while (!t_.empty() && now_ns - t_.front() >= 1000000000LL) t_.pop_front();
+    if (t_.size() >= cap_) return false;
+    t_.push_back(now_ns);
+    return true;
   }
  private:
-  double rate_, cap_, tokens_;
-  Ts last_ = 0;
-  bool init_ = false;
+  std::size_t cap_;
+  std::deque<Ts> t_;
 };
 
 struct RiskCtx {
@@ -111,7 +108,7 @@ class RiskEngine {
       if (locked_) return Reject::ProfitLock;
       if (c.strat_halted) return Reject::StratHalted;
       const double notional = static_cast<double>(o.qty) * c.ref_px;
-      if (notional > lim_.max_order_notional * c.equity) return Reject::Notional;
+      if (lim_.max_order_notional > 0 && notional > lim_.max_order_notional * c.equity) return Reject::Notional;
       if (c.open_orders >= lim_.max_open_orders) return Reject::OpenOrders;
       if (c.pos_qty == 0 && c.positions >= lim_.max_positions) return Reject::Positions;
       if (c.gross + c.pending_buy_notional + notional > lim_.max_gross * c.equity) return Reject::Gross;

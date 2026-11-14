@@ -26,14 +26,14 @@ There is no broker connection, no live market data and no real order path.
 ## What is not built yet
 
 - **Real data inside the repo.** NSE daily files are downloaded on demand (`scripts/fetch_data.sh` or the *real-data-backtest* workflow) and are not committed, because redistribution terms are not verified. Without them the report uses SYNTHETIC data.
-- **Real ticks.** Starting prices are the last trading day's official NSE closes (fetched when the terminal starts). Ticks after that are synthetic.
+- **Real intraday ticks.** The terminal replays the last NSE trading day: its official open, high, low and close (NSE daily files) are hit exactly; the order of high and low and every move between them are simulated, because free daily files carry no intraday path. Replay speed: real time, 2x, 60, 30 or 15 minutes, or paused. Book depth is simulated (each level about 5 seconds of that day's average traded quantity, when the volume unit checks out against turnover). Whether NSE's intraday chart can supply the real path must be verified on a trading day.
+- **Futures margin.** NIFTY futures are ordered in whole lots (lot size from NSE's F&O file) and paid in full from cash: no margin, no leverage.
 - **MCX.** MCX's site returns HTTP 403 to automated downloads, so there are no commodity futures. GOLDBEES (NSE gold ETF) is in the watchlist instead.
 - **Connector coverage.** Search covers every NSE and BSE code. Links are company relationships from NSE's bulk related-party filings (all NSE companies; people excluded), Wikidata, GLEIF and `tools/connector_annual_reports.csv`. No supplier or customer data. Relationship groups are mapped from free-text filings by rules in `tools/build_connector.py`; the original wording is shown with each link.
-- **Adverse media.** Text feed only: NSE corporate filings (tagged ADVERSE by a keyword rule) and GDELT news (tone below -3; GDELT often refuses shared cloud machines). No live video yet.
+- **Adverse media.** NSE corporate filings (tagged ADVERSE by a keyword rule), GDELT news (tone below -3; GDELT often refuses shared cloud machines) and 14 business TV channels on YouTube. Whether each channel allows playback inside the terminal is decided by YouTube per channel.
 - **Short selling and leverage.** The terminal is long-only and cash-limited (open orders count), per the no-leverage default in the plan.
 - **Dividend adjustment and MCX data.** Prices are adjusted for splits and bonuses only. No commodity data yet.
 - **Strategies in the terminal.** Momentum and mean reversion run in the backtest only. In the terminal, orders come from the ticket or the random stub.
-- **News, video and connector data.** Sample content only.
 - **GRIT.** The connector slot is empty; the "stub signals" button is random, not a model.
 - **Allocation-free hot path.** The order book preallocates its order pool, but price levels use `std::map`, which allocates.
 - **Fee and tax model.** A flat placeholder (3 bps per side). The real schedule is not verified.

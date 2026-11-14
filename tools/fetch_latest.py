@@ -77,9 +77,27 @@ def main():
         print("NO NSE FILE FOUND in the last 12 days: archive unreachable from this machine."); sys.exit(3)
     print("last trading day with an NSE file:", last)
 
-    lines = [f"# Starting prices = official NSE closes on {last}. Ticks after this are SYNTHETIC.",
-             f"# tick column is a simulation step ({SIM_TICK}), not the exchange tick size.",
-             "symbol,venue,price,tick,lot,source"]
+    lines = [f"# Replay day = NSE trading day {last}: official open, high, low, close and previous close from the NSE daily files.",
+             f"# The order of high and low inside the day and every move between them are SIMULATED (daily files carry no intraday path).",
+             f"# tick column is a simulation step ({SIM_TICK}), not the verified exchange tick size.",
+             "symbol,venue,price,tick,lot,source,date,open,high,low,close,prev_close,volume_units,volume_check"]
+
+    def vol_units(vol, turnover, close, lot):
+        """Traded quantity in units, verified against turnover: turnover / (volume x close) must be ~1
+        (volume already in units) or ~lot (volume counted in contracts). Otherwise the unit is not verified: 0."""
+        try:
+            vol, turnover, close = float(vol), float(turnover), float(close)
+        except (TypeError, ValueError):
+            return 0, "volume or turnover missing"
+        if vol <= 0 or close <= 0 or turnover <= 0:
+            return 0, "volume or turnover missing"
+        r = turnover / (vol * close)
+        if 0.8 < r < 1.25:
+            return int(vol), f"units (turnover/volume/close = {r:.3f})"
+        if lot > 1 and 0.8 < r / lot < 1.25:
+            return int(vol * lot), f"contracts x lot {lot} (turnover/volume/close = {r:.1f})"
+        return 0, f"unit not verified (turnover/volume/close = {r:.3f})"
+
     blob, st = fetch(FO.format(ymd=last.strftime("%Y%m%d")))
     if st == 200:
         futs = [r for r in csv.DictReader(io.StringIO(read_zip(blob)))
@@ -87,14 +105,34 @@ def main():
         futs.sort(key=lambda r: r["XpryDt"])
         if futs:
             f = futs[0]   # nearest expiry
-            lines.append(f"NIFTY-FUT,NSE F&O,{float(f['ClsPric']):.2f},{SIM_TICK},{int(f['NewBrdLotQty'])},NSE close {last} {f['FinInstrmNm'].strip()}")
+            lot = int(f["NewBrdLotQty"])
+            vu, vnote = vol_units(f.get("TtlTradgVol"), f.get("TtlTrfVal"), f.get("ClsPric"), lot)
+            print(f"NIFTY-FUT volume: {vnote}")
+            lines.append(",".join([
+                "NIFTY-FUT", "NSE F&O", f"{float(f['ClsPric']):.2f}", SIM_TICK, str(lot),
+                f"NSE close {last} {f['FinInstrmNm'].strip()}", str(last),
+                f"{float(f['OpnPric']):.2f}", f"{float(f['HghPric']):.2f}", f"{float(f['LwPric']):.2f}", f"{float(f['ClsPric']):.2f}",
+                f"{float(f['PrvsClsgPric']):.2f}", str(vu), vnote.replace(",", ";")]))
     else:
         print(f"F&O file not available (HTTP {st}); NIFTY-FUT omitted")
+    _, col = url_for(last)
+    raw = {}
+    blob = open(os.path.join(a.cache, last.strftime("%Y%m%d") + ".zip"), "rb").read()
+    rd = csv.DictReader(io.StringIO(read_zip(blob)))
+    rd.fieldnames = [x.strip() for x in rd.fieldnames]
+    for r in rd:
+        if r[col["ser"]].strip() == "EQ" and r[col["sym"]].strip() in WATCH:
+            raw[r[col["sym"]].strip()] = r
     for s in WATCH:
-        if s in rows_last:
-            lines.append(f"{s},NSE,{rows_last[s][3]:.2f},{SIM_TICK},1,NSE close {last}")
-        else:
-            print(f"{s}: not in EQ series on {last}; omitted")
+        r = raw.get(s)
+        if not r:
+            print(f"{s}: not in EQ series on {last}; omitted"); continue
+        vu, vnote = vol_units(r.get(col["v"]), r.get("TtlTrfVal"), r.get(col["c"]), 1)
+        print(f"{s} volume: {vnote}")
+        lines.append(",".join([
+            s, "NSE", f"{float(r[col['c']]):.2f}", SIM_TICK, "1", f"NSE close {last}", str(last),
+            f"{float(r[col['o']]):.2f}", f"{float(r[col['h']]):.2f}", f"{float(r[col['l']]):.2f}", f"{float(r[col['c']]):.2f}",
+            f"{float(r[col['pc']]):.2f}", str(vu), vnote.replace(",", ";")]))
     open(os.path.join(a.out, "instruments.csv"), "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
     if a.no_history:
