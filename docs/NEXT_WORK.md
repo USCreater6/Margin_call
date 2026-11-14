@@ -17,6 +17,9 @@ Order of the list = recommended order. "Needs you" = a decision or input only yo
    price-band-based tick sizes; must be loaded per symbol.
 5. **Corporate actions beyond splits/bonuses.** Demergers (e.g. Reliance → Jio Financial 2023),
    rights issues and dividends are not adjusted. Needed for total-return accuracy.
+5b. **Real intraday path for the replay.** The terminal now replays the last NSE day's official
+   open/high/low/close; the path between them is simulated. NSE's intraday chart endpoint answered on
+   Saturday 14 Nov with no points; check it on a trading day (Mon 16 Nov) before using it.
 6. **Strategies inside the terminal session.** Today they run in backtest only; terminal orders
    come from the ticket or the random stub.
 
@@ -42,7 +45,8 @@ Order of the list = recommended order. "Needs you" = a decision or input only yo
 
 15. **News:** second source (GDELT is rate-limited from GitHub runners); keyword tagging is
     simple — improve with a vetted word list or a model in the AI-engine slot.
-16. **Business TV:** 14 channels verified by YouTube channel feed. Whether each one allows
+16. **Business TV:** 14 channels verified by YouTube channel feed on 14 Nov. Later the same day the feed
+    returned HTTP 404 from GitHub's machines, so the list now falls back to the names verified on 14 Nov. Whether each one allows
     embedding can only be confirmed in your browser; "Open on YouTube" is the fallback.
 17. **Fundamentals:** currently NIFTY 50 then NIFTY 500, quarters from NSE filings.
     Extend to all listed companies and older quarters.
