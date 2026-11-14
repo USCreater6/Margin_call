@@ -127,10 +127,19 @@ std::vector<OrderId> parse_ids(const std::string& list) {
   }
   return out;
 }
+// Atomic save: write a temporary file, then rename over the old one (a crash never leaves half a file).
+bool save_text(const std::string& path, const std::string& text) {
+  std::error_code ec;
+  std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+  const std::string tmp = path + ".tmp";
+  { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); if (!f) return false; f << text; if (!f.flush()) return false; }
+  std::filesystem::rename(tmp, path, ec);
+  return !ec;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string web = "web", data, bind_addr = "127.0.0.1", instruments = "data/latest/instruments.csv";
+  std::string web = "web", data, bind_addr = "127.0.0.1", instruments = "data/latest/instruments.csv", state_file = "data/session/state.tsv";
   int port = 8080;
   for (int i = 1; i + 1 < argc; i += 2) {
     if (!std::strcmp(argv[i], "--web")) web = argv[i + 1];
@@ -138,6 +147,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--data")) data = argv[i + 1];
     else if (!std::strcmp(argv[i], "--bind")) bind_addr = argv[i + 1];
     else if (!std::strcmp(argv[i], "--instruments")) instruments = argv[i + 1];
+    else if (!std::strcmp(argv[i], "--state")) state_file = argv[i + 1];
   }
   std::signal(SIGPIPE, SIG_IGN);
 
@@ -167,6 +177,26 @@ int main(int argc, char** argv) {
     sim.add_instrument("TCS", "NSE", 300000, 10);
   }
 
+  // the demo account survives restarts: wallet, positions, orders, ledger
+  std::string last_saved;
+  if (state_file != "-") {
+    std::ifstream sf(state_file, std::ios::binary);
+    if (sf) {
+      std::ostringstream ss; ss << sf.rdbuf();
+      const std::string why = sim.restore(ss.str(), mono_ns());
+      if (why.empty()) { last_saved = ss.str(); std::printf("account restored from %s\n", state_file.c_str()); }
+      else {
+        std::fprintf(stderr, "account NOT restored (%s); the file is kept as %s.bad\n", why.c_str(), state_file.c_str());
+        std::error_code ec; std::filesystem::copy_file(state_file, state_file + ".bad", std::filesystem::copy_options::overwrite_existing, ec);
+      }
+    }
+  }
+  auto persist = [&]() {
+    if (state_file == "-") return;
+    std::string snap = sim.snapshot();
+    if (snap != last_saved && save_text(state_file, snap)) last_saved = std::move(snap);
+  };
+
   const int ls = ::socket(AF_INET, SOCK_STREAM, 0);
   int one = 1;
   ::setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
@@ -178,13 +208,16 @@ int main(int argc, char** argv) {
               loaded ? "from data files" : "PLACEHOLDER prices, held flat");
   std::fflush(stdout);
 
-  Ts next_tick = mono_ns() + 1000000000LL;
+  constexpr Ts kTick = 250000000LL;                 // 4 market updates per second
+  Ts next_tick = mono_ns() + kTick, next_save = mono_ns() + 2000000000LL;
   for (;;) {
     pollfd p{ls, POLLIN, 0};
-    ::poll(&p, 1, 100);
+    ::poll(&p, 1, 50);
     Ts now = mono_ns();
     sim.set_wall_ns(wall_ns());
-    while (now >= next_tick) { sim.step(next_tick); next_tick += 1000000000LL; }
+    if (now - next_tick > 5000000000LL) next_tick = now;   // after a pause (machine asleep): no catch-up burst
+    while (now >= next_tick) { sim.step(next_tick); next_tick += kTick; }
+    if (now >= next_save) { persist(); next_save = now + 2000000000LL; }
     sim.pump(now);   // queued cancels and exits go out as rate tokens free up (8 per second)
     if (!(p.revents & POLLIN)) continue;
     const int fd = ::accept(ls, nullptr, nullptr);
@@ -221,7 +254,7 @@ int main(int argc, char** argv) {
     if (path == "/api/state") {
       std::size_t sel = 0;
       if (const auto s = query.find("sel="); s != std::string::npos) sel = static_cast<std::size_t>(std::atol(query.c_str() + s + 4));
-      respond(fd, 200, "application/json", sim.state_json(sel, now));
+      respond(fd, 200, "application/json", sim.state_json(sel, now, query.find("lite=1") != std::string::npos));
     } else if (path.rfind("/api/", 0) == 0 && method == "POST") {
       std::string out = ok();
       if (path == "/api/order") {
@@ -254,6 +287,7 @@ int main(int argc, char** argv) {
       else if (path == "/api/stub") sim.set_stub(jget(body, "on") == "true");
       else { respond(fd, 404, "application/json", ok("Unknown endpoint")); ::close(fd); continue; }
       respond(fd, 200, "application/json", out);
+      persist();   // every account action is on disk before the next one
     } else if (std::string dp; method == "GET" && url_decode(path, dp) && dp.find("..") == std::string::npos && dp.find('\\') == std::string::npos) {
       const std::string file = web + (dp == "/" ? "/index.html" : dp);
       std::ifstream f(file, std::ios::binary);

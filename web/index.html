@@ -48,7 +48,7 @@ main{flex:1;min-height:0;padding:6px 16px}
 /* terminal columns: with the media panel open (it takes columns 16-24) and with it hidden */
 .tw{grid-column:span 6}.tb{grid-column:span 4}.tt{grid-column:span 5}.tbl{grid-column:span 6}.tp{grid-column:span 6}.ta{grid-column:span 3}
 #v-terminal.nomedia .tw{grid-column:span 7}#v-terminal.nomedia .tb{grid-column:span 5}#v-terminal.nomedia .tt{grid-column:span 12}
-#v-terminal.nomedia .tbl{grid-column:span 9}#v-terminal.nomedia .tp{grid-column:span 10}#v-terminal.nomedia .ta{grid-column:span 5}
+#v-terminal.nomedia .tbl{grid-column:span 8}#v-terminal.nomedia .tp{grid-column:span 11}#v-terminal.nomedia .ta{grid-column:span 5}
 /* hidden media keeps running (TV sound keeps playing): moved off screen, not removed */
 #v-terminal.nomedia .side{position:fixed;left:-10000px;top:0;width:640px;height:480px}
 .ckb{width:auto;margin:0;vertical-align:middle}
@@ -153,7 +153,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 </head>
 <body>
 <div class="simband">SIMULATION · DEMO ACCOUNT · REPLAY OF A REAL NSE DAY (INTRADAY PATH SIMULATED) · SAMPLE NEWS · NO REAL MONEY · NO BROKER</div>
-<div class="offline" id="offline">ENGINE NOT RUNNING: the terminal needs the C++ engine (scripts/serve.sh). No orders can be placed.</div>
+<div class="offline" id="offline"><span id="offMsg">ENGINE NOT RUNNING: the terminal needs the C++ engine. No orders can be placed.</span> <button class="btn sm" onclick="location.reload()">Reload</button></div>
 <header>
   <div class="brand">MARGIN_CALL</div>
   <nav id="nav"><a href="#terminal">Terminal</a><a href="#connector">Connector</a><a href="#engine">AI Engine</a><a href="#account">Account</a><a href="#risk">Risk</a><a href="#admin">Admin</a></nav>
@@ -340,7 +340,8 @@ function render(){
   const eq=equity(),d=dayPnl(),ps=Object.entries(S.pos);
   $('#hEq').textContent=inr(eq);$('#hPnl').textContent=inr(d)+' ('+pct(d/base())+')';$('#hPnl').className=cls(d);
   $('#hRate').textContent=rateNow()+' / '+(S.rate_max||8)+(S.queued?' · '+S.queued+' queued':'');
-  $('#offline').classList.toggle('on',!API);
+  $('#offline').classList.toggle('on',!API||fails>=3);
+  $('#offMsg').textContent=!API?'ENGINE NOT RUNNING: the terminal needs the C++ engine (it starts with the Codespace). No orders can be placed.':LOST;
   const kb=$('#killBtn');kb.textContent=S.killed?'RE-ARM':'KILL';kb.className='btn '+(S.killed?'arm':'kill');
   const st=$('#state');st.textContent=S.killed?'KILLED':S.halt?'HALTED':S.lock?'PROFIT LOCK':'ARMED';st.className='pill '+(S.killed||S.halt?'bad':S.lock?'warn':'ok');
   $('#stubBtn').textContent=stub?'Stop stub signals':'Start stub signals';
@@ -360,7 +361,7 @@ function render(){
   $('#closeSel').textContent='Close selected'+(SELL.size?' ('+SELL.size+')':'');$('#closeSel').disabled=!SELL.size;
   $('#pos').innerHTML='<tr><th><input type="checkbox" class="ckb" id="ckAll" aria-label="Select all positions"'+(lots.length&&lots.every(l=>l.c||SELL.has(l.id))&&SELL.size?' checked':'')+'></th><th>Position</th><th class="tc">Time</th><th>Instrument</th><th>Qty</th><th>Entry</th><th class="tc">Last</th><th>Unrealized</th><th></th></tr>'+(lots.map(l=>{const p=inst(l.s).p,u=(p-l.e)*l.q;return'<tr title="'+H(tip(l.ns,l.mt))+'"><td>'+(l.c?'':'<input type="checkbox" class="ckb" data-ck="'+l.id+'"'+(SELL.has(l.id)?' checked':'')+' aria-label="Select '+l.id+'">')+'</td><td>#'+l.id.slice(4)+'</td><td class="mute tc">'+tms(l.ns)+'</td><td>'+H(l.s)+'</td><td>'+qtyTxt(l.q,l.s)+'</td><td>'+l.e.toFixed(2)+'</td><td class="tc">'+p.toFixed(2)+'</td><td class="'+cls(u)+'">'+inr(u)+'</td><td>'+(l.c?'<span class="pill warn" title="Exit queued or being filled">CLOSING · '+H(l.by.toLowerCase())+'</span>':'<button class="btn sm sell" data-close="'+l.id+'" title="Close this position at market">Close</button>')+'</td></tr>'}).join('')||'<tr><td colspan="9" class="mute w">Flat. No simulated positions.</td></tr>');
   const rows=a=>'<tr><th>Time</th><th>Event</th><th style="text-align:left">Detail</th></tr>'+(a.map(x=>'<tr><td>'+x.t+'</td><td>'+x.k+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="3" class="mute">Nothing recorded yet.</td></tr>');
-  $('#alerts').innerHTML='<tr><th>Event</th><th style="text-align:left">Detail</th></tr>'+(S.audit.filter(x=>x.k!=='ORDER'&&x.k!=='FILL').slice(0,20).map(x=>'<tr title="'+x.t+'"><td>'+H(x.k)+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="2" class="mute">Nothing recorded yet.</td></tr>');
+  $('#alerts').innerHTML='<tr><th>Event</th><th style="text-align:left">Detail</th></tr>'+((S.recent||S.audit).filter(x=>x.k!=='ORDER'&&x.k!=='FILL').slice(0,20).map(x=>'<tr title="'+x.t+'"><td>'+H(x.k)+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="2" class="mute">Nothing recorded yet.</td></tr>');
   $('#audit').innerHTML=rows(S.audit.slice(0,80));
   $('#wCash').textContent=inr(S.cash);
   const un=ps.reduce((a,[s,p])=>a+(inst(s).p-p.avg)*p.q,0);
@@ -518,7 +519,7 @@ const ACT={
   buy:()=>order('BUY'),sell:()=>order('SELL'),mNo:closeM,
   stub:()=>{if(need())post('stub',{on:!stub}).then(poll)},
   media:()=>setMedia($('#v-terminal').classList.contains('nomedia')),
-  restart:()=>{if(need())post('restart').then(r=>{if(!r.ok)modal('Cannot restart the replay',H(r.why)+'.','OK',()=>{});poll()})},
+  restart:()=>{if(need())post('restart').then(poll)},
   closeSel:()=>{if(!SELL.size||!need())return;const ids=[...SELL];modal('Close '+ids.length+' position(s)?','<p>Each selected position is closed at market by its own sell order. At most 8 actions per second; extra closes wait in the queue.</p>','Close '+ids.length,()=>{post('close',{ids:ids.join(',')}).then(poll);SELL.clear()})},
   kill:()=>{if(need())modal('Activate kill switch?','<p>Blocks every new order at once (yours and AI), cancels all open orders and closes every position at market. At most 8 actions per second, so many items take a few seconds. Stays on until you press RE-ARM.</p>','Activate kill switch',()=>{post('kill').then(poll)})},
   cancelAll:()=>{if(need())modal('Cancel all open orders?','<p>'+openOrd().length+' open simulated order(s) will be cancelled (8 per second).</p>','Cancel all orders',()=>{post('cancel_all').then(poll)})},
@@ -528,7 +529,9 @@ const ACT={
   fund:()=>modal('Fund demo wallet','<p class="mute">Demo money only. No payment is taken.</p><label class="f" for="fAmt">Amount (₹)<input id="fAmt" type="number" min="1" value="50000"></label><div class="row" style="margin-top:6px">'+[10000,50000,100000,500000].map(a=>'<button class="btn sm" data-amt="'+a+'">'+inr(a)+'</button>').join('')+'</div><p class="note dn" id="fErr"></p>','Add demo funds',()=>{const a=+$('#fAmt').value;if(!(a>0)){$('#fErr').textContent='Enter an amount above zero.';return false}if(!need())return;post('fund',{amount:a}).then(poll)})
 };
 /* C++ engine link: when served by mc_server the terminal is a thin client of the engine */
-const post=(p,b)=>fetch('api/'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(r=>r.json()).catch(()=>({ok:false,why:'Engine not reachable'}));
+/* every action reports failure: a stopped Codespace or an expired sign-in returns no JSON */
+const LOST='Lost connection to the engine. The Codespace may have stopped (idle timeout) or your GitHub sign-in for this page expired. Start the Codespace, then press Reload.';
+const post=(p,b)=>fetch('api/'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(r=>r.json()).then(r=>{if(!r.ok&&r.why&&!['order'].includes(p))modal('Not done',H(r.why)+'.','OK',()=>{});return r}).catch(()=>{fails=99;render();modal('Engine not reachable',LOST,'OK',()=>{});return{ok:false,why:'Engine not reachable'}});
 const hms=w=>new Date(w).toLocaleTimeString('en-GB');
 function applyState(j){
   if(I.length!==j.inst.length||I.some((x,k)=>x.s!==j.inst[k].s)){I.length=0;j.inst.forEach(x=>I.push(Object.assign({},x)));$('#tSym').innerHTML=I.map(i=>'<option>'+H(i.s)+'</option>').join('');if(S.sel>=I.length)S.sel=0;tLabel()}
@@ -538,20 +541,28 @@ function applyState(j){
   $('#wlSrc').className='pill '+(rp.has?(rp.closed?'lock':'sim'):'bad');
   $('#wlSrc').title=rp.has?'Replay of NSE trading day '+rp.date+'. Open, high, low and close are the official NSE prices; the order of high and low and all moves between them are simulated. Market time 09:15 to 15:30.':'No NSE day data was loaded: prices are placeholders and do not move.';
   if(document.activeElement!==$('#spd'))$('#spd').value=String(rp.speed);
-  Object.assign(S,{start:j.start,cash:j.cash,dep:j.dep,real:j.real,fees:j.fees,turn:j.turn,killed:j.killed,halt:j.halt?'Daily loss limit hit':'',lock:j.lock,rate:j.rate,rate_max:j.rate_max,queued:j.queued,curve:j.curve,book:j.book});
+  Object.assign(S,{start:j.start,cash:j.cash,dep:j.dep,real:j.real,fees:j.fees,turn:j.turn,killed:j.killed,halt:j.halt?'Daily loss limit hit':'',lock:j.lock,rate:j.rate,rate_max:j.rate_max,queued:j.queued,book:j.book});
+  if(!j.lite)S.curve=j.curve;
   S.orders=j.orders.map(o=>({id:o.id,t:tms(o.ns)!=='-'?tms(o.ns):hms(o.w),ns:o.ns,mt:o.mt,src:o.src,side:o.side,q:o.q,f:o.f,s:o.s,type:o.type,px:o.px||null,fp:o.fp||0,st:o.st,why:o.why,code:o.code,lot:o.lot}));
   S.lots=j.lots||[];
   S.pos={};j.pos.forEach(p=>{S.pos[p.s]={q:p.q,avg:p.avg}});
-  S.audit=j.audit.map(e=>({t:hms(e.w),k:e.k,m:e.m}));
-  S.ledger=j.ledger.map(e=>({t:hms(e.w),k:e.k,a:e.a,b:e.b}));
+  const ev=j.audit.map(e=>({t:hms(e.w),k:e.k,m:e.m}));S.recent=ev;if(!j.lite)S.audit=ev;
+  if(!j.lite)S.ledger=j.ledger.map(e=>({t:hms(e.w),k:e.k,a:e.a,b:e.b}));
   stub=j.stub;
 }
-async function poll(){try{const r=await fetch('api/state?sel='+S.sel,{cache:'no-store'});if(!r.ok)return;applyState(await r.json());render()}catch(e){}}
+/* fast poll: prices, book, positions every 0.5 s; full state (history, ledger, curve) every 3 s */
+let fails=0,pc=0,busy=false;
+async function poll(){
+  if(busy)return;busy=true;
+  try{const full=(pc++%6===0),r=await fetch('api/state?sel='+S.sel+(full?'':'&lite=1'),{cache:'no-store'});const j=await r.json();if(j.engine!=='cpp')throw 0;applyState(j);fails=0}
+  catch(e){fails++}
+  busy=false;render();
+}
 async function initApi(){
   try{const r=await fetch('api/state',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(j.engine!=='cpp')return;
     API=true;applyState(j);
     document.querySelector('.simband').textContent='SIMULATION · C++ ENGINE · DEMO ACCOUNT · REPLAY OF A REAL NSE DAY (INTRADAY PATH SIMULATED) · '+(NEWS?'LIVE NEWS (NSE FILINGS)':'SAMPLE NEWS')+' · NO REAL MONEY · NO BROKER';
-    render();setInterval(poll,1000)}catch(e){render()}
+    render();setInterval(poll,500)}catch(e){render()}
 }
 document.addEventListener('click',e=>{
   if(e.target.id==='ckAll'){(S.lots||[]).forEach(l=>{if(!l.c){if(e.target.checked)SELL.add(l.id);else SELL.delete(l.id)}});render();return}

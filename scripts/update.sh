@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs every time the Codespace starts: pulls the latest code from GitHub, rebuilds and re-tests it.
 # Only fast-forward pulls are made, so nothing local is ever overwritten; data folders are not in git.
+# Then it starts the engine in the background (scripts/start.sh), so the terminal is up without opening a terminal.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p logs
@@ -14,3 +15,4 @@ mkdir -p logs
   fi
   bash scripts/build_and_report.sh && echo "build and tests: OK" || echo "BUILD OR TESTS FAILED: see this log"
 } 2>&1 | tee -a logs/update.log
+bash scripts/start.sh

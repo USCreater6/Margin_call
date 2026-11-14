@@ -79,6 +79,7 @@ class RiskEngine {
   void rearm() { killed_ = false; }
 
   void start_day(double equity) { day_start_ = equity; halted_ = false; locked_ = false; }
+  void restore(bool killed, bool halted, bool locked, double day_start) { killed_ = killed; halted_ = halted; locked_ = locked; day_start_ = day_start; }
 
   // Returns true if a daily halt or lockout was newly triggered.
   bool on_equity(double equity) {

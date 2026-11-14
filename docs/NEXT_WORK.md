@@ -13,8 +13,8 @@ Order of the list = recommended order. "Needs you" = a decision or input only yo
    index membership (NSE index change notices) so removed companies are included.
 3. **Real costs.** Fees are a flat placeholder. Need the actual schedule: brokerage (broker
    dependent — needs you), STT, exchange charges, SEBI fee, stamp duty, GST. Must verify each rate.
-4. **Verified tick sizes.** Sim uses 0.05 for everything (labelled not verified). NSE publishes
-   price-band-based tick sizes; must be loaded per symbol.
+4. **Tick sizes: done (14 Nov).** Read from NSE's security / contract master files (BidIntrvl) and
+   checked against the day's prices; falls back to 0.01, labelled, if a file cannot be read.
 5. **Corporate actions beyond splits/bonuses.** Demergers (e.g. Reliance → Jio Financial 2023),
    rights issues and dividends are not adjusted. Needed for total-return accuracy.
 5b. **Real intraday path for the replay.** The terminal now replays the last NSE day's official
@@ -25,8 +25,9 @@ Order of the list = recommended order. "Needs you" = a decision or input only yo
 
 ## B. Platform hardening (before Stage 2)
 
-7. **Persistence and audit trail.** Session state, orders and fills are in memory; a restart
-   loses them. Need crash-safe journal + replay on start.
+7. **Persistence: done for the demo account (14 Nov).** Wallet, positions, orders, ledger and replay
+   clock are saved to data/session/state.tsv every 2 s and after every action, and restored on start.
+   Still open: a full append-only audit journal (every event, never trimmed) before Stage 2.
 8. **Stop and modify from the terminal UI** (engine supports them; UI does not expose them).
 9. **Security.** Repo is public; server has no login. Before any broker key exists:
    private repo or secrets only in Codespaces secrets, real login, HTTPS only.

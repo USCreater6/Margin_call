@@ -650,6 +650,66 @@ static void test_session_kill_flattens() {
   NEAR(s.equity(), s.cash());
 }
 
+// 14 Nov: a Codespace stop lost the wallet. The whole account must survive a restart.
+static void test_session_persistence() {
+  const Ts sec = 1000000000LL;
+  RiskLimits lim; lim.max_order_notional = 0;
+  auto mk = [&](const char* date) { LiveSim s(100000.0, lim, 7); s.add_instrument("AAA", "TEST", 100000, 10); s.add_instrument("BBB", "TEST", 50000, 10);
+    LiveSim::Day d = day_aaa(); d.date = date; s.set_day(0, d); return s; };
+  LiveSim a = mk("2026-11-13");
+  a.set_wall_ns(1763000000123456789LL);
+  CHECK(a.fund(5000000));
+  a.set_speed(25); for (int k = 1; k <= 20; ++k) a.step(k * sec);
+  CHECK(a.submit(0, Side::Buy, OrdType::Market, 50, 0, "MANUAL", 30 * sec).empty());
+  CHECK(a.submit(0, Side::Buy, OrdType::Market, 20, 0, "MANUAL", 31 * sec).empty());
+  CHECK(a.submit(1, Side::Buy, OrdType::Limit, 5, 40000, "MANUAL", 32 * sec).empty());   // resting
+  a.kill(33 * sec); a.rearm();                                                              // closes, then re-armed
+  CHECK(a.submit(0, Side::Buy, OrdType::Market, 30, 0, "MANUAL", 40 * sec).empty());
+  CHECK(a.submit(1, Side::Buy, OrdType::Limit, 5, 40000, "MANUAL", 41 * sec).empty());
+  const std::string snap = a.snapshot();
+  LiveSim b = mk("2026-11-13");
+  CHECK(b.restore(snap, 50 * sec).empty());
+  NEAR(b.cash(), a.cash()); NEAR(b.base(), a.base()); NEAR(b.realized(), a.realized());
+  CHECK(b.position(0).qty == 30 && b.live_orders() == 1 && b.orders().size() == a.orders().size());
+  CHECK(b.lots().size() == a.lots().size() && b.lots().back().ns == a.lots().back().ns);
+  CHECK(std::fabs(b.market_time() - a.market_time()) < 1e-9 && b.price(0) == a.price(0));   // same day: clock continues
+  CHECK(b.snapshot() == snap || b.events().back().k == "RESTORED");
+  CHECK(b.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 60 * sec).empty());
+  CHECK(b.orders().back().o.id == a.orders().size() + 1);                                   // ids continue
+  CHECK(b.cancel(b.orders().size() - 1, 61 * sec) && b.live_orders() == 0);                 // the restored resting order is in the book
+  // new trading day: account kept, clock from 09:15
+  LiveSim c = mk("2026-11-16");
+  CHECK(c.restore(snap, 50 * sec).empty() && c.position(0).qty == 30 && c.market_time() == 0 && c.price(0) == 100000);
+  NEAR(c.cash(), a.cash());
+  // an instrument missing from today's data comes back at its saved price
+  LiveSim m(100000.0, lim, 7); m.add_instrument("AAA", "TEST", 100000, 10);
+  CHECK(m.restore(snap, 50 * sec).empty() && m.instruments() == 2 && m.find_symbol("BBB") == 1);
+  // a damaged file is refused and changes nothing
+  LiveSim z = mk("2026-11-13"); const double before = z.cash();
+  CHECK(!z.restore("MCSNAP\t1\nA\t1\n", 0).empty() && !z.restore(snap.substr(0, snap.size() / 2), 0).empty() && z.cash() == before);
+}
+
+// Review 14 Nov: a market buy for all the cash went negative (fee and deeper levels were not counted);
+// a close stuck forever behind the user's own best bid blocked every new order.
+static void test_session_cash_and_blocked_exit() {
+  const Ts sec = 1000000000LL;
+  RiskLimits lim; lim.max_order_notional = 0; lim.max_gross = 10;
+  LiveSim s(99 * 1000.10 + 5.0, lim, 7); s.add_instrument("AAA", "TEST", 100000, 10);
+  // 99 at the best ask (1000.10) fits the cash; the fee (and any deeper level) does not: must be refused
+  CHECK(!s.submit(0, Side::Buy, OrdType::Market, 99, 0, "MANUAL", 0).empty() && s.orders().back().code == "INSUFFICIENT_CASH");
+  CHECK(s.submit(0, Side::Buy, OrdType::Market, 98, 0, "MANUAL", sec).empty() && s.cash() >= 0);
+  LiveSim t(100000.0, lim, 7); t.add_instrument("AAA", "TEST", 100000, 10);
+  CHECK(t.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 0).empty());
+  CHECK(t.submit(0, Side::Buy, OrdType::Limit, 1, 99995 - 5, "MANUAL", sec).empty());   // 999.90 = best bid level: joins it
+  CHECK(t.submit(0, Side::Buy, OrdType::Limit, 1, 99995 + 5, "MANUAL", 2 * sec).empty()); // 1000.00: now the best bid
+  CHECK(t.close_lots({t.lots()[0].id}, "MANUAL", 3 * sec) == 1);
+  CHECK(t.queued() == 0 && t.position(0).qty == 10 && !t.lots()[0].closing);             // refused, not stuck
+  bool said = false; for (const auto& e : t.events()) said = said || e.k == "EXIT BLOCKED";
+  CHECK(said);
+  CHECK(t.submit(0, Side::Buy, OrdType::Limit, 1, 98000, "MANUAL", 4 * sec).empty());     // the queue is not blocking new orders
+  t.kill(5 * sec); t.pump(7 * sec); CHECK(t.position(0).qty == 0 && t.live_orders() == 0); // kill: cancels first, then closes
+}
+
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -668,6 +728,8 @@ int main() {
       {"session: replay of the real day (open, high, low, close)", test_session_replay},
       {"session: one lot per order, close lots, 8 actions per second, lot size", test_session_lots},
       {"session: kill closes every order and position", test_session_kill_flattens},
+      {"session: account survives a restart (snapshot and restore)", test_session_persistence},
+      {"session: cash never negative; exit blocked by own bid is refused, not stuck", test_session_cash_and_blocked_exit},
   };
   int failed_tests = 0;
   for (const T& t : tests) {

@@ -4,7 +4,7 @@
   "features": { "ghcr.io/devcontainers/features/python:1": { "installTools": false } },
   "postCreateCommand": "bash scripts/build_and_report.sh",
   "postStartCommand": "bash scripts/update.sh",
-  "postAttachCommand": "bash scripts/serve.sh",
+  "postAttachCommand": "bash scripts/start.sh",
   "forwardPorts": [8080],
   "portsAttributes": { "8080": { "label": "Margin_call terminal", "onAutoForward": "openBrowser" } }
 }

@@ -2,6 +2,7 @@
 #pragma once
 #include <cmath>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include "mc/types.hpp"
 
@@ -45,6 +46,13 @@ class Portfolio {
   }
 
   double cash() const { return cash_; }
+  // Restores a saved account (used by the terminal after a restart). Strategy 0 only.
+  void restore(double cash, double realized, double fees, const std::vector<std::pair<std::uint32_t, Position>>& positions) {
+    cash_ = cash; realized_.assign(realized_.size(), 0.0); fees_.assign(fees_.size(), 0.0);
+    if (!realized_.empty()) { realized_[0] = realized; fees_[0] = fees; }
+    pos_.clear();
+    for (const auto& [inst, p] : positions) if (p.qty != 0) pos_[key(0, inst)] = p;
+  }
   void deposit(double amount) { cash_ += amount; }
   double realized(std::uint16_t s) const { return realized_[s]; }
   double fees(std::uint16_t s) const { return fees_[s]; }

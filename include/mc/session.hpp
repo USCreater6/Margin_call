@@ -15,7 +15,9 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <cstdlib>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include "mc/exchange.hpp"
@@ -29,6 +31,7 @@ namespace mc {
 class LiveSim {
  public:
   static constexpr int kSession = 22500;   // 09:15 to 15:30 IST, in seconds
+  static constexpr int kRes = 4;           // replay path points per market second
 
   struct Rec { Order o; std::string src, why, code; double fill_val = 0; std::int64_t wall = 0, ns = 0; double mt = -1;
     OrderId lot = 0;   // for an exit: the position lot it closes
@@ -106,7 +109,7 @@ class LiveSim {
   std::string restart_replay() {
     if (!has_replay_) return "No trading-day data loaded";
     if (pf_.open_positions() > 0 || live_ > 0 || !q_.empty() || !later_.empty()) return "Close all positions and orders first (Flatten all)";
-    mt_ = 0; closed_ = false;
+    mt_ = 0; closed_ = false; last_step_ = 0;
     for (std::size_t i = 0; i < inst_.size(); ++i) if (inst_[i].has_day) { inst_[i].px = inst_[i].path[0]; marks_[i] = inst_[i].px; quote(i); }
     log("REPLAY", "Replay of " + replay_date_ + " restarted at 09:15. Daily loss and profit limits are not reset by a restart.");
     return "";
@@ -154,6 +157,12 @@ class LiveSim {
       c.pos_qty = position(i).qty;
       // a market buy is checked at the best ask it will actually pay, not the last price
       c.ref_px = rupees(type == OrdType::Limit ? px : (side == Side::Buy && in.book.best_ask() > 0 ? in.book.best_ask() : in.px));
+      if (type == OrdType::Market && side == Side::Buy) {   // what the order will really pay: walk the asks, add the fee
+        double cost = 0; Qty left = qty;
+        in.book.levels(Side::Sell, 1 << 20, [&](Price p, Qty q) { if (left > 0) { const Qty a = std::min(left, q); cost += rupees(p) * static_cast<double>(a); left -= a; } });
+        if (qty > left) c.ref_px = std::max(c.ref_px, cost / static_cast<double>(qty - left));
+      }
+      if (side == Side::Buy) c.ref_px *= 1.0 + fee_bps_ / 1e4;
       c.cash = pf_.cash();
       c.long_only = true;
       for (const Rec& q : orders_) {
@@ -241,7 +250,7 @@ class LiveSim {
     orders_.clear(); events_.clear(); ledger_.clear(); curve_.clear(); stamps_.clear(); lots_.clear(); q_.clear(); later_.clear();
     pf_ = Portfolio(capital_, 1); risk_ = RiskEngine(lim_); risk_.start_day(capital_);
     dep_ = fees_ = turn_ = real_ = 0; live_ = 0; stub_ = false; kill_pending_ = flatten_pending_ = false;
-    mt_ = 0; closed_ = false;
+    mt_ = 0; closed_ = false; last_step_ = 0;
     for (std::size_t i = 0; i < inst_.size(); ++i) { inst_[i].px = inst_[i].has_day ? inst_[i].path[0] : inst_[i].start; marks_[i] = inst_[i].px; }
     ledger_.push_back({wall_, "OPENING DEMO BALANCE", capital_, capital_});
     for (std::size_t i = 0; i < inst_.size(); ++i) quote(i);
@@ -269,7 +278,7 @@ class LiveSim {
     last_step_ = now;
     if (move && has_replay_ && !closed_ && speed_ > 0) {
       mt_ = std::min<double>(kSession, mt_ + dt * speed_);
-      for (auto& in : inst_) if (in.has_day) in.px = in.path[static_cast<std::size_t>(mt_)];
+      for (auto& in : inst_) if (in.has_day) in.px = path_at(in, mt_);
       if (mt_ >= kSession) {
         closed_ = true; stub_ = false;
         log("SESSION CLOSE", "Replay of " + replay_date_ + " reached 15:30: prices hold at the official close. New orders are closed; exits still work.");
@@ -293,18 +302,122 @@ class LiveSim {
     }
     if (!was_l && risk_.locked()) log("LOCKOUT", "Daily profit target reached. New risk blocked.");
     pump(now);
-    if (stub_ && !closed_ && ticks_ % 4 == 0 && !inst_.empty()) {
+    if (stub_ && !closed_ && now >= next_stub_ && !inst_.empty()) {
+      next_stub_ = now + 4000000000LL;
       const std::size_t i = rng_.next() % inst_.size();
       const Side s = (position(i).qty > 0 && (rng_.next() & 1)) ? Side::Sell : Side::Buy;   // long-only
       log("AI STUB", std::string("Random stub signal: ") + to_string(s) + " " + std::to_string(inst_[i].lot) + " " + inst_[i].sym);
       submit(i, s, OrdType::Market, inst_[i].lot, 0, "AI-STUB", now);
     }
-    curve_.push_back(equity() - base());
-    if (curve_.size() > 900) curve_.erase(curve_.begin());
+    if (now >= next_curve_) {   // one point per second
+      next_curve_ = now + 1000000000LL;
+      curve_.push_back(equity() - base());
+      if (curve_.size() > 900) curve_.erase(curve_.begin());
+    }
     prune(now);
   }
 
-  std::string state_json(std::size_t sel, Ts now) {
+  // ---- persistence: the whole account survives a restart (Codespace stop / start) ----
+  // Tab-separated text. Strings never contain tabs or newlines (they are replaced by spaces).
+  std::string snapshot() const {
+    std::ostringstream o;
+    o.precision(17);
+    auto cl = [](const std::string& x) { std::string r = x; for (char& c : r) if (c == '\t' || c == '\n' || c == '\r') c = ' '; return r; };
+    o << "MCSNAP\t1\n";
+    o << "A\t" << capital_ << "\t" << dep_ << "\t" << fees_ << "\t" << turn_ << "\t" << real_ << "\t" << pf_.cash() << "\t" << pf_.realized(0) << "\t" << pf_.fees(0) << "\n";
+    o << "R\t" << risk_.killed() << "\t" << risk_.halted() << "\t" << risk_.locked() << "\t" << risk_.day_start() << "\t" << day_ << "\n";
+    o << "C\t" << cl(replay_date_.empty() ? "-" : replay_date_) << "\t" << mt_ << "\t" << speed_ << "\t" << closed_ << "\t" << kill_pending_ << "\t" << flatten_pending_ << "\n";
+    for (const Inst& in : inst_) o << "I\t" << cl(in.sym) << "\t" << cl(in.venue) << "\t" << in.px << "\t" << in.tick << "\t" << in.lot << "\n";
+    for (std::size_t i = 0; i < inst_.size(); ++i) { const Position p = position(i); if (p.qty) o << "P\t" << cl(inst_[i].sym) << "\t" << p.qty << "\t" << p.avg << "\n"; }
+    for (const Lot& l : lots_)
+      o << "L\t" << l.id << "\t" << cl(inst_[l.inst].sym) << "\t" << l.qty << "\t" << l.cost << "\t" << l.entry << "\t" << l.realized << "\t" << l.mt << "\t" << l.ns
+        << "\t" << l.closing << "\t" << cl(l.closer.empty() ? "-" : l.closer) << "\n";
+    for (const Rec& r : orders_)
+      o << "O\t" << r.o.id << "\t" << cl(inst_[r.o.inst].sym) << "\t" << static_cast<int>(r.o.side) << "\t" << static_cast<int>(r.o.type) << "\t" << r.o.px << "\t" << r.o.qty
+        << "\t" << r.o.filled << "\t" << static_cast<int>(r.o.st) << "\t" << cl(r.src.empty() ? "-" : r.src) << "\t" << cl(r.why.empty() ? "-" : r.why) << "\t" << cl(r.code.empty() ? "-" : r.code)
+        << "\t" << r.fill_val << "\t" << r.wall << "\t" << r.ns << "\t" << r.mt << "\t" << r.lot << "\n";
+    const std::size_t ef = events_.size() > 300 ? events_.size() - 300 : 0;
+    for (std::size_t k = ef; k < events_.size(); ++k) o << "E\t" << events_[k].wall << "\t" << cl(events_[k].k) << "\t" << cl(events_[k].m.empty() ? "-" : events_[k].m) << "\n";
+    for (const Led& g : ledger_) o << "G\t" << g.wall << "\t" << cl(g.k) << "\t" << g.a << "\t" << g.b << "\n";
+    o << "V";
+    for (double v : curve_) o << "\t" << v;
+    o << "\nEND\n";
+    return o.str();
+  }
+  // Restores a snapshot. Instruments are matched by symbol; one that is no longer in today's data comes back
+  // at its saved price (labelled). If the replay day changed, the account is kept and the clock starts at 09:15.
+  // Returns an empty string on success, otherwise why the account was not restored.
+  std::string restore(const std::string& text, Ts now) {
+    std::vector<std::vector<std::string>> rows;
+    { std::istringstream in(text); std::string line;
+      while (std::getline(in, line)) { std::vector<std::string> f; std::istringstream ls(line); std::string x; while (std::getline(ls, x, '\t')) f.push_back(x); if (!f.empty()) rows.push_back(f); } }
+    if (rows.empty() || rows[0].size() < 2 || rows[0][0] != "MCSNAP" || rows[0][1] != "1") return "not a snapshot file";
+    if (rows.back()[0] != "END") return "snapshot incomplete (no END line)";
+    try {
+      auto D = [](const std::string& x) { return std::stod(x); };
+      auto L = [](const std::string& x) { return static_cast<long long>(std::stoll(x)); };
+      auto S = [](const std::string& x) { return x == "-" ? std::string() : x; };
+      // instruments first (missing ones are re-created at their saved price)
+      for (const auto& f : rows) if (f[0] == "I" && f.size() >= 6 && find_symbol(f[1]) < 0) {
+        add_instrument(f[1], f[2], L(f[3]), L(f[4]), "saved price (not in today's data)", L(f[5]));
+      }
+      auto idx = [&](const std::string& sym) -> std::uint32_t {
+        const int i = find_symbol(sym); if (i < 0) throw std::runtime_error("unknown symbol " + sym); return static_cast<std::uint32_t>(i); };
+      double cash = 0, pfr = 0, pff = 0; std::string date; double mt = 0, spd = 1; bool cls = false, kp = false, fp = false;
+      bool rk = false, rh = false, rl = false; double rds = 0; std::int64_t dday = 0;
+      std::vector<std::pair<std::uint32_t, Position>> pos;
+      std::vector<Lot> lots; std::vector<Rec> ords; std::vector<Evt> evs; std::vector<Led> led; std::vector<double> crv;
+      double cap = capital_, dep = 0, fees = 0, turn = 0, real = 0;
+      for (const auto& f : rows) {
+        const std::string& t = f[0];
+        if (t == "A" && f.size() >= 9) { cap = D(f[1]); dep = D(f[2]); fees = D(f[3]); turn = D(f[4]); real = D(f[5]); cash = D(f[6]); pfr = D(f[7]); pff = D(f[8]); }
+        else if (t == "R" && f.size() >= 6) { rk = f[1] == "1"; rh = f[2] == "1"; rl = f[3] == "1"; rds = D(f[4]); dday = L(f[5]); }
+        else if (t == "C" && f.size() >= 7) { date = S(f[1]); mt = D(f[2]); spd = D(f[3]); cls = f[4] == "1"; kp = f[5] == "1"; fp = f[6] == "1"; }
+        else if (t == "P" && f.size() >= 4) { Position p; p.qty = L(f[2]); p.avg = D(f[3]); pos.push_back({idx(f[1]), p}); }
+        else if (t == "L" && f.size() >= 11) {
+          Lot l; l.id = static_cast<OrderId>(L(f[1])); l.inst = idx(f[2]); l.qty = L(f[3]); l.cost = D(f[4]); l.entry = D(f[5]); l.realized = D(f[6]);
+          l.mt = D(f[7]); l.ns = L(f[8]); l.closing = f[9] == "1"; l.closer = S(f[10]); lots.push_back(l);
+        } else if (t == "O" && f.size() >= 17) {
+          Rec r; r.o.id = static_cast<OrderId>(L(f[1])); r.o.inst = idx(f[2]); r.o.side = static_cast<Side>(L(f[3])); r.o.type = static_cast<OrdType>(L(f[4]));
+          r.o.px = L(f[5]); r.o.qty = L(f[6]); r.o.filled = L(f[7]); r.o.st = static_cast<State>(L(f[8])); r.src = S(f[9]); r.why = S(f[10]); r.code = S(f[11]);
+          r.fill_val = D(f[12]); r.wall = L(f[13]); r.ns = L(f[14]); r.mt = D(f[15]); r.lot = static_cast<OrderId>(L(f[16]));
+          if (r.o.id != ords.size() + 1) throw std::runtime_error("order ids out of sequence");
+          ords.push_back(r);
+        } else if (t == "E" && f.size() >= 4) evs.push_back({L(f[1]), f[2], S(f[3])});
+        else if (t == "G" && f.size() >= 5) led.push_back({L(f[1]), f[2], D(f[3]), D(f[4])});
+        else if (t == "V") for (std::size_t k = 1; k < f.size(); ++k) crv.push_back(D(f[k]));
+      }
+      for (const Lot& l : lots) if (l.id == 0 || l.id > ords.size()) throw std::runtime_error("lot without its order");
+      // all parsed: apply
+      for (auto& in : inst_) in.book.clear();
+      capital_ = cap; dep_ = dep; fees_ = fees; turn_ = turn; real_ = real;
+      pf_.restore(cash, pfr, pff, pos);
+      risk_ = RiskEngine(lim_); risk_.restore(rk, rh, rl, rds);
+      if (dday) day_ = dday;
+      orders_ = ords; lots_ = lots; events_ = evs; ledger_ = led; curve_ = crv;
+      q_.clear(); later_.clear(); stamps_.clear(); stub_ = false; last_step_ = 0;
+      kill_pending_ = kp; flatten_pending_ = fp;
+      const bool same_day = has_replay_ && date == replay_date_;
+      if (same_day) { mt_ = std::min<double>(mt, kSession); closed_ = cls; } else { mt_ = 0; closed_ = false; }
+      if (spd == 0 || spd == 1 || spd == 2 || spd == 6.25 || spd == 12.5 || spd == 25) speed_ = spd;
+      for (std::size_t i = 0; i < inst_.size(); ++i) { if (inst_[i].has_day) inst_[i].px = path_at(inst_[i], mt_); marks_[i] = inst_[i].px; quote(i); }
+      live_ = 0;
+      auto cb = [&](const Trade& tr) { on_trade(tr); };
+      for (const Rec& r : orders_) if (is_live(r.o.st)) {
+        ++live_;
+        if (r.o.type == OrdType::Limit) inst_[r.o.inst].book.add_limit(r.o.id, r.o.side, r.o.px, r.o.qty - r.o.filled, cb);
+      }
+      for (Lot& l : lots_) if (l.qty > 0 && l.closing) { l.closing = false; queue_close(l.id, l.closer.empty() ? "RESTORE" : l.closer); }
+      log("RESTORED", "Account restored after a restart: cash, positions, orders and ledger." +
+                          std::string(same_day ? " Replay clock continues." : has_replay_ ? " New replay day " + replay_date_ + ": clock starts at 09:15." : ""));
+      pump(now);
+      return "";
+    } catch (const std::exception& e) {
+      return std::string("snapshot unreadable: ") + e.what();
+    }
+  }
+
+  std::string state_json(std::size_t sel, Ts now, bool lite = false) {
     prune(now);
     if (sel >= inst_.size()) sel = 0;
     std::ostringstream o;
@@ -350,7 +463,8 @@ class LiveSim {
       first = false;
     }
     o << "],\"orders\":[";
-    const std::size_t from = orders_.size() > 200 ? orders_.size() - 200 : 0;
+    const std::size_t keep = lite ? 40 : 200;
+    const std::size_t from = orders_.size() > keep ? orders_.size() - keep : 0;
     for (std::size_t k = orders_.size(); k-- > from;) {
       const Rec& r = orders_[k];
       o << (k + 1 == orders_.size() ? "" : ",") << "{\"id\":\"" << tag(r.o.id) << "\",\"w\":" << r.wall << ",\"ns\":\"" << r.ns << "\",\"mt\":" << r.mt
@@ -358,15 +472,15 @@ class LiveSim {
         << ",\"s\":\"" << esc(inst_[r.o.inst].sym) << "\",\"type\":\"" << to_string(r.o.type) << "\",\"px\":" << rupees(r.o.px) << ",\"fp\":" << r.avg_fill()
         << ",\"lot\":\"" << (r.lot ? tag(r.lot) : "") << "\",\"code\":\"" << esc(r.code) << "\",\"st\":\"" << to_string(r.o.st) << "\",\"why\":\"" << esc(r.why) << "\"}";
     }
-    o << "],\"audit\":[";
-    const std::size_t ef = events_.size() > 150 ? events_.size() - 150 : 0;
+    o << "],\"lite\":" << b(lite) << ",\"audit\":[";
+    const std::size_t ef = events_.size() > (lite ? 25u : 150u) ? events_.size() - (lite ? 25u : 150u) : 0;
     for (std::size_t k = events_.size(); k-- > ef;)
       o << (k + 1 == events_.size() ? "" : ",") << "{\"w\":" << events_[k].wall << ",\"k\":\"" << esc(events_[k].k) << "\",\"m\":\"" << esc(events_[k].m) << "\"}";
     o << "],\"ledger\":[";
-    for (std::size_t k = ledger_.size(); k-- > 0;)
+    if (!lite) for (std::size_t k = ledger_.size(); k-- > 0;)
       o << (k + 1 == ledger_.size() ? "" : ",") << "{\"w\":" << ledger_[k].wall << ",\"k\":\"" << ledger_[k].k << "\",\"a\":" << ledger_[k].a << ",\"b\":" << ledger_[k].b << "}";
     o << "],\"curve\":[";
-    for (std::size_t k = 0; k < curve_.size(); ++k) o << (k ? "," : "") << curve_[k];
+    if (!lite) for (std::size_t k = 0; k < curve_.size(); ++k) o << (k ? "," : "") << curve_[k];
     o << "]}";
     return o.str();
   }
@@ -495,7 +609,16 @@ class LiveSim {
     const std::size_t i = l->inst;
     Qty q = std::min(l->qty, exit_room(i));
     q = (q / inst_[i].lot) * inst_[i].lot;
-    if (q <= 0) { later_.push_back(a); return; }   // no bid depth now: retry after the next re-quote
+    if (q <= 0) {
+      OrderId own = 0;
+      for (const Rec& r : orders_) if (is_live(r.o.st) && r.o.inst == i && r.o.side == Side::Buy && (!own || r.o.px > orders_[own - 1].o.px)) own = r.o.id;
+      if (own && inst_[i].book.best_bid() <= orders_[own - 1].o.px) {   // our own buy is the best bid: selling would trade with ourselves
+        l->closing = false; l->closer.clear();
+        log("EXIT BLOCKED", "Lot " + tag(a.id) + " not closed: your own buy " + tag(own) + " is the best bid (self-trade prevention). Cancel it, then close again.");
+        return;
+      }
+      later_.push_back(a); return;                  // no bid depth now: retry after the next re-quote
+    }
     Rec r;
     r.o.id = orders_.size() + 1; r.o.inst = static_cast<std::uint32_t>(i); r.o.side = Side::Sell; r.o.type = OrdType::Market;
     r.o.qty = q; r.src = a.src; r.wall = wall_; r.ns = wall_ns_; r.mt = has_replay_ ? mt_ : -1; r.lot = a.id;
@@ -523,8 +646,13 @@ class LiveSim {
     }
   }
 
+  static Price path_at(const Inst& in, double mt) {
+    const std::size_t k = std::min(in.path.size() - 1, static_cast<std::size_t>(mt * kRes));
+    return in.path[k];
+  }
   // Builds the replay path: open -> first extreme -> second extreme -> close, Brownian bridges in between,
-  // kept inside the day's high and low. Deterministic per symbol and date (a restart replays the same path).
+  // REFLECTED (not clipped) at the day's high and low so the price never sits flat on a limit.
+  // 4 points per market second. Deterministic per symbol and date (a restart replays the same path).
   void build_path(Inst& in) {
     const Day& d = in.day;
     std::uint64_t h = 1469598103934665603ULL;
@@ -535,32 +663,39 @@ class LiveSim {
       return std::sqrt(-2.0 * std::log(u1)) * std::cos(6.283185307179586 * r.uni());
     };
     const double lo = static_cast<double>(d.l), hi = static_cast<double>(d.h);
+    auto reflect = [lo, hi](double x) {
+      if (hi <= lo) return lo;
+      for (int g = 0; g < 64 && (x > hi || x < lo); ++g) x = x > hi ? 2 * hi - x : 2 * lo - x;
+      return std::clamp(x, lo, hi);
+    };
     const double op = std::clamp(static_cast<double>(d.o), lo, hi), cl = std::clamp(static_cast<double>(d.c), lo, hi);
     const bool up = cl >= op;
-    const int ta = static_cast<int>(kSession * (0.10 + 0.35 * r.uni())), tb = static_cast<int>(kSession * (0.55 + 0.35 * r.uni()));
-    const int T[4] = {0, ta, tb, kSession};
+    const int N = kSession * kRes;
+    const int ta = static_cast<int>(N * (0.10 + 0.35 * r.uni())), tb = static_cast<int>(N * (0.55 + 0.35 * r.uni()));
+    const int T[4] = {0, ta, tb, N};
     const double V[4] = {op, up ? lo : hi, up ? hi : lo, cl};
-    std::vector<double> x(kSession + 1, op);
+    std::vector<double> x(static_cast<std::size_t>(N) + 1, op);
+    std::vector<double> w;
     for (int s = 0; s < 3; ++s) {
       const int n = T[s + 1] - T[s];
       if (n <= 0) continue;
       const double sigma = 0.3 * (hi - lo) / std::sqrt(static_cast<double>(n));
-      std::vector<double> w(static_cast<std::size_t>(n) + 1, 0.0);
+      w.assign(static_cast<std::size_t>(n) + 1, 0.0);
       for (int k = 1; k <= n; ++k) w[static_cast<std::size_t>(k)] = w[static_cast<std::size_t>(k) - 1] + sigma * gauss();
       for (int k = 0; k <= n; ++k) {
         const double f = static_cast<double>(k) / n;
-        x[static_cast<std::size_t>(T[s] + k)] = std::clamp(V[s] + (V[s + 1] - V[s]) * f + w[static_cast<std::size_t>(k)] - f * w[static_cast<std::size_t>(n)], lo, hi);
+        x[static_cast<std::size_t>(T[s] + k)] = reflect(V[s] + (V[s + 1] - V[s]) * f + w[static_cast<std::size_t>(k)] - f * w[static_cast<std::size_t>(n)]);
       }
     }
     const Price t = in.tick;
     const Price lo_t = ((d.l + t - 1) / t) * t, hi_t = (d.h / t) * t;
-    in.path.assign(kSession + 1, d.o);
-    for (std::size_t k = 0; k <= kSession; ++k) {
-      Price p = static_cast<Price>(std::llround(x[k] / static_cast<double>(t))) * t;
+    in.path.assign(static_cast<std::size_t>(N) + 1, d.o);
+    for (std::size_t k = 0; k <= static_cast<std::size_t>(N); ++k) {
+      const Price p = static_cast<Price>(std::llround(x[k] / static_cast<double>(t))) * t;
       in.path[k] = lo_t <= hi_t ? std::clamp(p, lo_t, hi_t) : static_cast<Price>(std::llround(x[k]));
     }
     // the four official prices exactly
-    in.path[0] = d.o; in.path[static_cast<std::size_t>(ta)] = up ? d.l : d.h; in.path[static_cast<std::size_t>(tb)] = up ? d.h : d.l; in.path[kSession] = d.c;
+    in.path[0] = d.o; in.path[static_cast<std::size_t>(ta)] = up ? d.l : d.h; in.path[static_cast<std::size_t>(tb)] = up ? d.h : d.l; in.path[static_cast<std::size_t>(N)] = d.c;
   }
 
   // Re-quotes the synthetic market makers around the current price. May fill the user's resting orders.
@@ -636,7 +771,7 @@ class LiveSim {
   int live_ = 0;
   long ticks_ = 0;
   std::int64_t wall_ = 0, wall_ns_ = 0, day_ = 0;
-  Ts last_step_ = 0;
+  Ts last_step_ = 0, next_stub_ = 0, next_curve_ = 0;
   bool stub_ = false, kill_pending_ = false, flatten_pending_ = false;
   bool has_replay_ = false, closed_ = false;
   double mt_ = 0, speed_ = 1;

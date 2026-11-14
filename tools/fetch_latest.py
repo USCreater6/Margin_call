@@ -18,7 +18,40 @@ from fetch_nse import UD, LG, fetch, url_for   # noqa: E402
 
 FO = "https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{ymd}_F_0000.csv.zip"
 WATCH = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "GOLDBEES"]   # NSE cash-market rows in the watchlist
-SIM_TICK = "0.05"   # simulation price step; NOT the verified exchange tick size
+CM_MASTER = "https://nsearchives.nseindia.com/content/cm/NSE_CM_security_{dmy}.csv.gz"
+FO_MASTER = "https://nsearchives.nseindia.com/content/fo/NSE_FO_contract_{dmy}.csv.gz"
+FALLBACK_TICK = 0.01   # finest NSE step; used only when the master file cannot be read (labelled)
+
+
+def tick_sizes(last):
+    """Price step per symbol from NSE's own master files: column BidIntrvl, in paise
+    (GOLDBEES 1 = 0.01, HDFCBANK 5 = 0.05; checked against traded prices in vol/price lines below).
+    Returns ({symbol: rupees}, nifty_future_tick or None, note)."""
+    import gzip
+    eq, fut, notes = {}, None, []
+    blob, st = fetch(CM_MASTER.format(dmy=last.strftime("%d%m%Y")))
+    if st == 200:
+        for r in csv.DictReader(io.StringIO(gzip.decompress(blob).decode("utf-8", "replace"))):
+            if r.get("SctySrs", "").strip() == "EQ" and r.get("BidIntrvl", "").strip().isdigit():
+                eq[r["TckrSymb"].strip()] = int(r["BidIntrvl"]) / 100.0
+    else:
+        notes.append(f"CM master HTTP {st}")
+    blob, st = fetch(FO_MASTER.format(dmy=last.strftime("%d%m%Y")))
+    if st == 200:
+        ticks = {int(r["BidIntrvl"]) for r in csv.DictReader(io.StringIO(gzip.decompress(blob).decode("utf-8", "replace")))
+                 if r.get("FinInstrmNm", "").strip() == "FUTIDX" and r.get("TckrSymb", "").strip() == "NIFTY" and r.get("BidIntrvl", "").strip().isdigit()}
+        if len(ticks) == 1:
+            fut = ticks.pop() / 100.0
+        else:
+            notes.append(f"NIFTY futures BidIntrvl values {sorted(ticks)}: not one value")
+    else:
+        notes.append(f"FO master HTTP {st}")
+    return eq, fut, "; ".join(notes)
+
+
+def on_grid(prices, tick):
+    """True if every price is a whole number of ticks (a check that the tick is right)."""
+    return all(abs(round(p / tick) * tick - p) < 1e-6 for p in prices)
 
 
 def read_zip(blob):
@@ -79,7 +112,7 @@ def main():
 
     lines = [f"# Replay day = NSE trading day {last}: official open, high, low, close and previous close from the NSE daily files.",
              f"# The order of high and low inside the day and every move between them are SIMULATED (daily files carry no intraday path).",
-             f"# tick column is a simulation step ({SIM_TICK}), not the verified exchange tick size.",
+             "# tick = NSE price step from NSE's security / contract master (BidIntrvl), checked against the day's prices.",
              "symbol,venue,price,tick,lot,source,date,open,high,low,close,prev_close,volume_units,volume_check"]
 
     def vol_units(vol, turnover, close, lot):
@@ -98,6 +131,15 @@ def main():
             return int(vol * lot), f"contracts x lot {lot} (turnover/volume/close = {r:.1f})"
         return 0, f"unit not verified (turnover/volume/close = {r:.3f})"
 
+    eq_tick, fut_tick, tick_note = tick_sizes(last)
+    if tick_note:
+        print("tick sizes:", tick_note)
+
+    def pick_tick(sym, verified, prices):
+        if verified and on_grid(prices, verified):
+            print(f"{sym} tick: {verified} (NSE master, on grid)"); return verified, "NSE master"
+        print(f"{sym} tick: NOT VERIFIED (master {verified}); using {FALLBACK_TICK}"); return FALLBACK_TICK, "tick not verified"
+
     blob, st = fetch(FO.format(ymd=last.strftime("%Y%m%d")))
     if st == 200:
         futs = [r for r in csv.DictReader(io.StringIO(read_zip(blob)))
@@ -108,9 +150,10 @@ def main():
             lot = int(f["NewBrdLotQty"])
             vu, vnote = vol_units(f.get("TtlTradgVol"), f.get("TtlTrfVal"), f.get("ClsPric"), lot)
             print(f"NIFTY-FUT volume: {vnote}")
+            tk, tsrc = pick_tick("NIFTY-FUT", fut_tick, [float(f[k]) for k in ("OpnPric", "HghPric", "LwPric", "ClsPric")])
             lines.append(",".join([
-                "NIFTY-FUT", "NSE F&O", f"{float(f['ClsPric']):.2f}", SIM_TICK, str(lot),
-                f"NSE close {last} {f['FinInstrmNm'].strip()}", str(last),
+                "NIFTY-FUT", "NSE F&O", f"{float(f['ClsPric']):.2f}", f"{tk:g}", str(lot),
+                f"NSE close {last} {f['FinInstrmNm'].strip()}" + ("" if tsrc == "NSE master" else " (tick not verified)"), str(last),
                 f"{float(f['OpnPric']):.2f}", f"{float(f['HghPric']):.2f}", f"{float(f['LwPric']):.2f}", f"{float(f['ClsPric']):.2f}",
                 f"{float(f['PrvsClsgPric']):.2f}", str(vu), vnote.replace(",", ";")]))
     else:
@@ -129,8 +172,9 @@ def main():
             print(f"{s}: not in EQ series on {last}; omitted"); continue
         vu, vnote = vol_units(r.get(col["v"]), r.get("TtlTrfVal"), r.get(col["c"]), 1)
         print(f"{s} volume: {vnote}")
+        tk, tsrc = pick_tick(s, eq_tick.get(s), [float(r[col[k]]) for k in ("o", "h", "l", "c")])
         lines.append(",".join([
-            s, "NSE", f"{float(r[col['c']]):.2f}", SIM_TICK, "1", f"NSE close {last}", str(last),
+            s, "NSE", f"{float(r[col['c']]):.2f}", f"{tk:g}", "1", f"NSE close {last}" + ("" if tsrc == "NSE master" else " (tick not verified)"), str(last),
             f"{float(r[col['o']]):.2f}", f"{float(r[col['h']]):.2f}", f"{float(r[col['l']]):.2f}", f"{float(r[col['c']]):.2f}",
             f"{float(r[col['pc']]):.2f}", str(vu), vnote.replace(",", ";")]))
     open(os.path.join(a.out, "instruments.csv"), "w").write("\n".join(lines) + "\n")
