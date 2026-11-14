@@ -1,35 +1,42 @@
-"""Diagnostic only (overwritten per probe): where does NSE publish each instrument's tick size?
-Prints any field whose name contains 'tick' from NSE quote APIs. Nothing is saved."""
-import json, sys, os, urllib.request
+"""Diagnostic only (overwritten per probe): do NSE's archive master files carry tick sizes?
+Tries candidate file names for one date; prints status, header and the rows for a few symbols."""
+import gzip, io, sys, os, zipfile, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nse_session import Nse
+from fetch_nse import fetch
 
-nse = Nse()
-
-
-def walk(o, path=""):
-    if isinstance(o, dict):
-        for k, v in o.items():
-            p = f"{path}.{k}" if path else k
-            if "tick" in k.lower() or "lot" in k.lower():
-                print(f"   {p} = {json.dumps(v)[:120]}")
-            walk(v, p)
-    elif isinstance(o, list):
-        for i, v in enumerate(o[:3]):
-            walk(v, f"{path}[{i}]")
+D = sys.argv[2] if len(sys.argv) > 2 else "13112026"   # DDMMYYYY
+Y = sys.argv[1] if len(sys.argv) > 1 else "20261113"   # YYYYMMDD
+CANDIDATES = [
+    f"https://nsearchives.nseindia.com/content/cm/NSE_CM_security_{D}.csv.gz",
+    f"https://nsearchives.nseindia.com/content/fo/NSE_FO_contract_{D}.csv.gz",
+    f"https://nsearchives.nseindia.com/content/cm/NSE_CM_contract_{D}.csv.gz",
+    "https://nsearchives.nseindia.com/content/equities/sec_list.csv",
+    f"https://nsearchives.nseindia.com/content/fo/NSE_FO_contract_{D}.csv.zip",
+]
+WANT = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "GOLDBEES", "NIFTY"]
 
 
-for sym in ["RELIANCE", "HDFCBANK", "TCS", "INFY", "GOLDBEES"]:
-    url = "https://www.nseindia.com/api/quote-equity?symbol=" + urllib.request.quote(sym)
+def text(blob, url):
+    if url.endswith(".gz"):
+        return gzip.decompress(blob).decode("utf-8", "replace")
+    if url.endswith(".zip"):
+        z = zipfile.ZipFile(io.BytesIO(blob)); return z.read(z.namelist()[0]).decode("utf-8", "replace")
+    return blob.decode("utf-8", "replace")
+
+
+for url in CANDIDATES:
+    blob, st = fetch(url)
+    print(f"{st} {url}")
+    if st != 200:
+        continue
     try:
-        j = nse.get_json(url, referer="https://www.nseindia.com/get-quotes/equity?symbol=" + sym)
-        print(f"quote-equity {sym}: top keys {list(j.keys())[:12]}")
-        walk(j)
+        t = text(blob, url)
     except Exception as e:
-        print(f"quote-equity {sym}: ERROR {e}")
-try:
-    j = nse.get_json("https://www.nseindia.com/api/quote-derivative?symbol=NIFTY", referer="https://www.nseindia.com/get-quotes/derivatives?symbol=NIFTY")
-    print("quote-derivative NIFTY: top keys", list(j.keys())[:12])
-    walk(j)
-except Exception as e:
-    print("quote-derivative NIFTY: ERROR", e)
+        print("   unreadable:", e); continue
+    lines = t.splitlines()
+    print("   header:", lines[0][:400])
+    shown = 0
+    for l in lines[1:]:
+        f = l.split(",") if "," in l else l.split("|")
+        if any(x.strip() in WANT for x in f[:6]) and shown < 10:
+            print("   row:", l[:300]); shown += 1
