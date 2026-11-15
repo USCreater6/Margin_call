@@ -55,8 +55,10 @@ Order of the list = recommended order. "Needs you" = a decision or input only yo
 
 ## E. AI engine
 
-19. **Engine slot only.** Connect your model when you decide; it stays out of the live order path
-    (spec rule). Interface and evaluation harness to be agreed then.
+19. **G.R.I.T agent v0 built (15 Nov 2026).** Agent tab: you set OFF / SHADOW / SIM; the agent decides every
+    action with a reason; every order goes through the C++ risk engine; KILL turns it OFF and only you re-arm.
+    v0 is rules from the strategies' indicators; v1 is trained on its logged decisions (data/agent/, never
+    committed) on a GPU from 21 Nov. Headlines, filings and connector links are not used by v0 yet.
 
 ## Needs you (summary)
 

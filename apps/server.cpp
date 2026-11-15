@@ -16,6 +16,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include "mc/agent.hpp"
 #include "mc/replay.hpp"
 #include "mc/session.hpp"
 
@@ -140,6 +141,7 @@ bool save_text(const std::string& path, const std::string& text) {
 
 int main(int argc, char** argv) {
   std::string web = "web", data, bind_addr = "127.0.0.1", instruments = "data/latest/instruments.csv", state_file = "data/session/state.tsv";
+  std::string agent_log = "data/agent/decisions.jsonl";   // training record of the G.R.I.T agent; data/ is never committed
   int port = 8080;
   for (int i = 1; i + 1 < argc; i += 2) {
     if (!std::strcmp(argv[i], "--web")) web = argv[i + 1];
@@ -148,6 +150,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--bind")) bind_addr = argv[i + 1];
     else if (!std::strcmp(argv[i], "--instruments")) instruments = argv[i + 1];
     else if (!std::strcmp(argv[i], "--state")) state_file = argv[i + 1];
+    else if (!std::strcmp(argv[i], "--agent-log")) agent_log = argv[i + 1];
   }
   std::signal(SIGPIPE, SIG_IGN);
 
@@ -191,6 +194,23 @@ int main(int argc, char** argv) {
       }
     }
   }
+  // G.R.I.T agent: OFF at every start; the owner turns it on. It judges each instrument from a year of
+  // daily closes (web/data/history/SYMBOL.csv, written by tools/fetch_latest.py) when that file exists.
+  Agent agent;
+  agent.resize(sim.instruments());
+  for (std::size_t i = 0; i < sim.instruments(); ++i) {
+    const std::string hf = web + "/data/history/" + sim.sym(i) + ".csv";
+    if (std::filesystem::exists(hf)) { const LoadResult r = load_bars(hf); if (r.ok) agent.set_history(i, r.bars); }
+  }
+  std::printf("G.R.I.T agent: OFF; daily history for %d of %zu instruments\n", agent.with_history(), sim.instruments());
+  auto write_agent_log = [&]() {
+    auto lines = agent.drain_log();
+    if (lines.empty() || agent_log == "-") return;
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(agent_log).parent_path(), ec);
+    std::ofstream f(agent_log, std::ios::app);
+    for (const auto& l : lines) f << l << '\n';
+  };
   auto persist = [&]() {
     if (state_file == "-") return;
     std::string snap = sim.snapshot();
@@ -216,7 +236,8 @@ int main(int argc, char** argv) {
     Ts now = mono_ns();
     sim.set_wall_ns(wall_ns());
     if (now - next_tick > 5000000000LL) next_tick = now;   // after a pause (machine asleep): no catch-up burst
-    while (now >= next_tick) { sim.step(next_tick); next_tick += kTick; }
+    while (now >= next_tick) { sim.step(next_tick); agent.tick(sim, next_tick); next_tick += kTick; }
+    write_agent_log();
     if (now >= next_save) { persist(); next_save = now + 2000000000LL; }
     sim.pump(now);   // queued cancels and exits go out as rate tokens free up (8 per second)
     if (!(p.revents & POLLIN)) continue;
@@ -255,6 +276,8 @@ int main(int argc, char** argv) {
       std::size_t sel = 0;
       if (const auto s = query.find("sel="); s != std::string::npos) sel = static_cast<std::size_t>(std::atol(query.c_str() + s + 4));
       respond(fd, 200, "application/json", sim.state_json(sel, now, query.find("lite=1") != std::string::npos));
+    } else if (path == "/api/agent" && method == "GET") {
+      respond(fd, 200, "application/json", agent.json(sim));
     } else if (path.rfind("/api/", 0) == 0 && method == "POST") {
       std::string out = ok();
       if (path == "/api/order") {
@@ -275,18 +298,24 @@ int main(int argc, char** argv) {
         out = (d != std::string::npos && sim.cancel(static_cast<OrderId>(std::atoll(id.c_str() + d)), now)) ? ok() : ok("Order is not open");
       } else if (path == "/api/cancel_all") sim.cancel_all(now);
       else if (path == "/api/flatten") sim.flatten(now);
-      else if (path == "/api/kill") sim.kill(now);
+      else if (path == "/api/kill") { sim.kill(now); agent.on_kill(sim, now); }
+      else if (path == "/api/agent") {   // the owner sets the agent's mode; the agent has no access to this
+        const std::string m = jget(body, "mode");
+        if (m != "off" && m != "shadow" && m != "sim") out = ok("Mode must be off, shadow or sim");
+        else out = ok(agent.set_mode(sim, m == "sim" ? AgentMode::Sim : m == "shadow" ? AgentMode::Shadow : AgentMode::Off, now));
+      }
       else if (path == "/api/close") {
         const auto ids = parse_ids(jget(body, "ids"));
         out = ids.empty() ? ok("Select at least one position") : sim.close_lots(ids, "MANUAL", now) ? ok() : ok("Already closing or closed");
       } else if (path == "/api/speed") out = sim.set_speed(std::atof(jget(body, "x").c_str())) ? ok() : ok("Speed must be 0, 1, 2, 6.25, 12.5 or 25");
-      else if (path == "/api/restart") { const std::string w = sim.restart_replay(); out = ok(w, w.empty() ? "" : "NOT_FLAT"); }
+      else if (path == "/api/restart") { const std::string w = sim.restart_replay(); out = ok(w, w.empty() ? "" : "NOT_FLAT"); if (w.empty()) agent.new_day(); }
       else if (path == "/api/rearm") sim.rearm();
-      else if (path == "/api/reset") sim.reset();
+      else if (path == "/api/reset") { sim.reset(); agent.new_day(); }
       else if (path == "/api/fund") out = sim.fund(std::atof(jget(body, "amount").c_str())) ? ok() : ok("Enter an amount above zero");
       else if (path == "/api/stub") sim.set_stub(jget(body, "on") == "true");
       else { respond(fd, 404, "application/json", ok("Unknown endpoint")); ::close(fd); continue; }
       respond(fd, 200, "application/json", out);
+      write_agent_log();
       persist();   // every account action is on disk before the next one
     } else if (std::string dp; method == "GET" && url_decode(path, dp) && dp.find("..") == std::string::npos && dp.find('\\') == std::string::npos) {
       const std::string file = web + (dp == "/" ? "/index.html" : dp);

@@ -154,7 +154,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 <div class="offline" id="offline"><span id="offMsg">ENGINE NOT RUNNING: the terminal needs the C++ engine. No orders can be placed.</span> <button class="btn sm" onclick="location.reload()">Reload</button></div>
 <header>
   <div class="brand">MARGIN_CALL</div>
-  <nav id="nav"><a href="#terminal">Terminal</a><a href="#connector">Connector</a><a href="#engine">AI Engine</a><a href="#account">Account</a><a href="#risk">Risk</a><a href="#admin">Admin</a></nav>
+  <nav id="nav"><a href="#terminal">Terminal</a><a href="#connector">Connector</a><a href="#engine">G.R.I.T agent</a><a href="#account">Account</a><a href="#risk">Risk</a><a href="#admin">Admin</a></nav>
   <div class="spacer"></div>
   <span class="pill" id="state">ARMED</span><span class="pill lock" title="Locked until Stage 4 approval">LIVE: LOCKED</span>
   <div class="kv">Demo equity<b id="hEq">-</b></div>
@@ -179,7 +179,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
     </div>
     <p class="note" id="tMsg">Every order passes the risk engine first.</p>
     <div class="row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px;align-items:center">
-      <span class="pill bad">GRIT: NOT CONNECTED</span>
+      <span class="pill lock" id="agPill" title="Set on the G.R.I.T agent tab">G.R.I.T AGENT: OFF</span>
       <button class="btn sm" data-act="stub" id="stubBtn">Start stub signals</button>
     </div>
     <p class="note">Stub signals are random, not GRIT.</p>
@@ -206,41 +206,23 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 </section>
 
 <section class="view" id="v-engine">
-  <div class="panel c4"><h2>AI engine connector</h2><div class="scroll"><div class="body">
-    <table>
-      <tr><td>Engine</td><td>GRIT (your model)</td></tr>
-      <tr><td>Endpoint</td><td class="mute">not set · env GRIT_ENDPOINT</td></tr>
-      <tr><td>Key</td><td class="mute">not set · env GRIT_API_KEY</td></tr>
-      <tr><td>Status</td><td><span class="pill bad">NOT CONNECTED</span></td></tr>
-    </table>
-    <p class="note">Mode ladder</p>
-    <div class="row"><span class="pill sim">STUB · available</span><span class="pill lock">SHADOW · signals logged, no orders</span><span class="pill lock">SIM TRADING</span><span class="pill lock">LIVE · locked</span></div>
-    <p class="note">The slot is open and empty. GRIT's exact role in the order path is left undecided, as you asked.</p>
+  <div class="panel c4"><h2>G.R.I.T agent <span class="mute" style="font-weight:400">your trader · decides everything</span></h2><div class="scroll"><div class="body">
+    <table id="agInfo"></table>
+    <p class="note">Mode · set by you only; the agent cannot change it</p>
+    <div class="row" id="agModes"></div>
+    <p class="note">Kill switch: you only. It cancels every open order, closes every position and turns the agent OFF. The agent has no way to press or re-arm it.</p>
   </div></div></div>
-  <div class="panel c4"><h2>Signal contract <span class="pill warn">PROPOSED</span></h2><div class="scroll"><div class="body">
-<pre>input  { ts, instrument, bars[], book_top,
-         headlines[], connector_edges[],
-         position, limits }
-output { instrument, action: BUY|SELL|HOLD,
-         qty, confidence 0..1, horizon, reason }</pre>
-    <p class="note">Training exports for teaching GRIT to trade (not built): replay episodes as state, action, outcome; headline to price-move pairs; rejected orders with the risk reason. Format JSONL.</p>
+  <div class="panel c4"><h2>Hard limits <span class="mute" style="font-weight:400">C++ risk engine · agent cannot change</span></h2><div class="scroll"><table id="agLim"></table>
+    <p class="note" style="padding:0 10px">Every agent order passes these checks first, with no exemption. A breach halts new risk.</p></div></div>
+  <div class="panel c4"><h2>What the agent reads</h2><div class="scroll"><table id="agIn"></table></div></div>
+  <div class="panel c12"><h2>Decision feed <span class="mute" style="font-weight:400" id="agFeedN"></span></h2><div class="scroll"><table id="agFeed"></table></div></div>
+  <div class="panel c5"><h2>Agent positions <span class="mute" style="font-weight:400">each order its own line</span></h2><div class="scroll"><table id="agPos"></table></div></div>
+  <div class="panel c3"><h2>Scorecard <span class="mute" style="font-weight:400">agent, this session</span></h2><div class="scroll"><table id="agScore"></table></div></div>
+  <div class="panel c4"><h2>Training <span class="mute" style="font-weight:400">G.R.I.T learns to trade</span></h2><div class="scroll"><div class="body">
+    <table id="agTrain"></table>
+    <p class="note">A new version replaces the running one only when it passes Margin_call's fixed validation criteria on replay it has not seen (the same gate the strategies face). Otherwise the old version keeps running and the result is logged.</p>
+    <table><tr><th>Version</th><th>Status</th><th>Gate</th></tr><tr><td>v0 rules</td><td class="up">built</td><td class="mute">-</td></tr><tr><td>v1 trained</td><td class="mute">not trained</td><td class="mute">GPU from 21 Nov</td></tr></table>
   </div></div></div>
-  <div class="panel c4"><h2>Backtest and latency</h2><div class="scroll"><div class="body" id="rep"><div class="empty">No results loaded. Run <span class="mono">scripts/build_and_report.sh</span>; the C++ engine writes its SIMULATION report to <span class="mono">web/reports/</span> and it appears here.</div></div></div></div>
-  <div class="panel c12"><h2>Sources feeding the engine</h2><div class="scroll"><table>
-    <tr><th>Feed</th><th>Source</th><th>API key</th><th>Covers</th><th>Status</th></tr>
-    <tr><td>Prices</td><td class="w">NSE daily files: equity and F&amp;O bhavcopy, index closes</td><td>none</td><td class="w">Starting prices (last close) and one year of daily history, fetched when the terminal starts</td><td><span class="pill ok">in use</span></td></tr>
-    <tr><td>Prices</td><td class="w">MCX daily files</td><td>-</td><td class="w">Commodity futures</td><td><span class="pill bad">blocked (HTTP 403)</span></td></tr>
-    <tr><td>News text</td><td class="w">GDELT DOC 2.0 API</td><td>none</td><td class="w">Global news search with tone, rolling window of about 3 months</td><td><span class="pill">not loaded</span></td></tr>
-    <tr><td>News text</td><td class="w">Publisher RSS feeds and NSE / BSE announcements</td><td>none</td><td class="w">Indian business headlines and company filings</td><td><span class="verify">must verify terms</span></td></tr>
-    <tr><td>News text</td><td class="w">Keyed news APIs</td><td>free key, your sign-up</td><td class="w">Extra coverage; limits differ per provider</td><td><span class="verify">must verify</span></td></tr>
-    <tr><td>Video</td><td class="w">Official live-stream embeds of news channels</td><td>none</td><td class="w">Live TV panel</td><td><span class="verify">must verify per channel</span></td></tr>
-    <tr><td>Connector</td><td class="w">NSE equity list and BSE daily file</td><td>none</td><td class="w">All listed codes, matched by ISIN</td><td><span class="pill ok">in use</span></td></tr>
-    <tr><td>Connector</td><td class="w">GLEIF API (who owns whom), via LEIs held in Wikidata</td><td>none</td><td class="w">Direct parent and subsidiaries</td><td><span class="pill ok">in use</span></td></tr>
-    <tr><td>Connector</td><td class="w">Wikidata (subsidiary, parent, owner, owned company)</td><td>none</td><td class="w">About 200 NSE-listed companies, 75 with links (probe, 13 Nov 2026)</td><td><span class="pill ok">in use</span></td></tr>
-    <tr><td>Connector</td><td class="w">Annual-report lists (tools/connector_annual_reports.csv)</td><td>none</td><td class="w">Subsidiaries, associates, joint ventures with page references</td><td><span class="pill warn">file ready, empty</span></td></tr>
-    <tr><td>Connector</td><td class="w">Supplier and customer links</td><td>-</td><td class="w">No free dataset found. Bloomberg's is proprietary.</td><td><span class="pill lock">not available free</span></td></tr>
-    <tr><td>Fundamentals</td><td class="w">NSE / BSE result, corporate-action and shareholding filings</td><td>none</td><td class="w">Financials, actions, shareholding</td><td><span class="verify">must verify access</span></td></tr>
-  </table></div></div>
 </section>
 
 <section class="view" id="v-account">
@@ -278,6 +260,22 @@ output { instrument, action: BUY|SELL|HOLD,
     <p class="note">This preview has no real login. Live trading cannot be enabled from this build.</p>
   </div></div></div>
   <div class="panel c8"><h2>Audit trail</h2><div class="scroll"><table id="audit"></table></div></div>
+  <div class="panel c6"><h2>Backtest and latency</h2><div class="scroll"><div class="body" id="rep"><div class="empty">No results loaded. Run <span class="mono">scripts/build_and_report.sh</span>; the C++ engine writes its SIMULATION report to <span class="mono">web/reports/</span> and it appears here.</div></div></div></div>
+  <div class="panel c6"><h2>Data sources</h2><div class="scroll"><table>
+    <tr><th>Feed</th><th>Source</th><th>API key</th><th>Covers</th><th>Status</th></tr>
+    <tr><td>Prices</td><td class="w">NSE daily files: equity and F&amp;O bhavcopy, index closes</td><td>none</td><td class="w">Starting prices (last close) and one year of daily history, fetched when the terminal starts</td><td><span class="pill ok">in use</span></td></tr>
+    <tr><td>Prices</td><td class="w">MCX daily files</td><td>-</td><td class="w">Commodity futures</td><td><span class="pill bad">blocked (HTTP 403)</span></td></tr>
+    <tr><td>News text</td><td class="w">GDELT DOC 2.0 API</td><td>none</td><td class="w">Global news search with tone, rolling window of about 3 months</td><td><span class="pill">not loaded</span></td></tr>
+    <tr><td>News text</td><td class="w">Publisher RSS feeds and NSE / BSE announcements</td><td>none</td><td class="w">Indian business headlines and company filings</td><td><span class="verify">must verify terms</span></td></tr>
+    <tr><td>News text</td><td class="w">Keyed news APIs</td><td>free key, your sign-up</td><td class="w">Extra coverage; limits differ per provider</td><td><span class="verify">must verify</span></td></tr>
+    <tr><td>Video</td><td class="w">Official live-stream embeds of news channels</td><td>none</td><td class="w">Live TV panel</td><td><span class="verify">must verify per channel</span></td></tr>
+    <tr><td>Connector</td><td class="w">NSE equity list and BSE daily file</td><td>none</td><td class="w">All listed codes, matched by ISIN</td><td><span class="pill ok">in use</span></td></tr>
+    <tr><td>Connector</td><td class="w">GLEIF API (who owns whom), via LEIs held in Wikidata</td><td>none</td><td class="w">Direct parent and subsidiaries</td><td><span class="pill ok">in use</span></td></tr>
+    <tr><td>Connector</td><td class="w">Wikidata (subsidiary, parent, owner, owned company)</td><td>none</td><td class="w">About 200 NSE-listed companies, 75 with links (probe, 13 Nov 2026)</td><td><span class="pill ok">in use</span></td></tr>
+    <tr><td>Connector</td><td class="w">Annual-report lists (tools/connector_annual_reports.csv)</td><td>none</td><td class="w">Subsidiaries, associates, joint ventures with page references</td><td><span class="pill warn">file ready, empty</span></td></tr>
+    <tr><td>Connector</td><td class="w">Supplier and customer links</td><td>-</td><td class="w">No free dataset found. Bloomberg's is proprietary.</td><td><span class="pill lock">not available free</span></td></tr>
+    <tr><td>Fundamentals</td><td class="w">NSE / BSE result, corporate-action and shareholding filings</td><td>none</td><td class="w">Financials, actions, shareholding</td><td><span class="verify">must verify access</span></td></tr>
+  </table></div></div>
 </section>
 
 </main>
@@ -293,7 +291,7 @@ const cls=n=>n>0?'up':n<0?'dn':'mute';
 const now=()=>new Date().toLocaleTimeString('en-GB');
 const L={stop:.02,profit:.10,loss:.03,stratLoss:.015,gross:1,maxPos:3,maxOrd:6,rate:8};
 const I=[];   /* instruments come from the C++ engine */
-const STR=[{n:'Momentum',ph:'Launch',a:.5},{n:'Mean reversion',ph:'Launch',a:.5},{n:'AI engine (GRIT)',ph:'Slot open'},{n:'Basis arbitrage',ph:'Phase 2'},{n:'Cross-exchange arb',ph:'Phase 3'},{n:'Statistical arb',ph:'Phase 4'},{n:'Market making',ph:'Phase 5'}];
+const STR=[{n:'Momentum',ph:'Launch',a:.5},{n:'Mean reversion',ph:'Launch',a:.5},{n:'G.R.I.T agent',ph:'Owner sets mode'},{n:'Basis arbitrage',ph:'Phase 2'},{n:'Cross-exchange arb',ph:'Phase 3'},{n:'Statistical arb',ph:'Phase 4'},{n:'Market making',ph:'Phase 5'}];
 const HEAD=[['ADVERSE','SAMPLE','Live NSE filings appear here once the news feed has loaded']];
 let API=false;
 let S,stub=false,tk=0,hi=0,news=[],SELL=new Set(),RP=null,C={isin:'',pick:null,data:null,idx:null,hist:{}};
@@ -518,7 +516,7 @@ const ACT={
   media:()=>setMedia($('#v-terminal').classList.contains('nomedia')),
   restart:()=>{if(need())post('restart').then(poll)},
   closeSel:()=>{if(!SELL.size||!need())return;const ids=[...SELL];modal('Close '+ids.length+' position(s)?','<p>Each selected position is closed at market by its own sell order. At most 8 actions per second; extra closes wait in the queue.</p>','Close '+ids.length,()=>{post('close',{ids:ids.join(',')}).then(poll);SELL.clear()})},
-  kill:()=>{if(need())modal('Activate kill switch?','<p>Blocks every new order at once (yours and AI), cancels all open orders and closes every position at market. At most 8 actions per second, so many items take a few seconds. Stays on until you press RE-ARM.</p>','Activate kill switch',()=>{post('kill').then(poll)})},
+  kill:()=>{if(need())modal('Activate kill switch?','<p>Blocks every new order at once (yours and the G.R.I.T agent\'s), cancels all open orders, closes every position at market and switches the agent OFF. At most 8 actions per second, so many items take a few seconds. Stays on until you press RE-ARM.</p>','Activate kill switch',()=>{post('kill').then(poll)})},
   cancelAll:()=>{if(need())modal('Cancel all open orders?','<p>'+openOrd().length+' open simulated order(s) will be cancelled (8 per second).</p>','Cancel all orders',()=>{post('cancel_all').then(poll)})},
   flatten:()=>{if(need())modal('Flatten all positions?','<p>Cancels open orders and closes all '+(S.lots||[]).length+' position(s) at market, 8 actions per second. Stub signals stop.</p>','Flatten all',()=>{post('flatten').then(poll)})},
   rearm:()=>modal('Re-arm the system?','<p>Clears the kill switch so new orders are accepted again.</p>'+(S.halt?'<p class="dn">The daily loss halt stays on until the next trading day. It is a hard limit and re-arming does not clear it.</p>':'')+(S.lock?'<p class="warn">The +10% profit lockout stays on until the next trading day.</p>':''),'Re-arm',()=>{post('rearm').then(poll)}),
@@ -547,6 +545,30 @@ function applyState(j){
   if(!j.lite)S.ledger=j.ledger.map(e=>({t:hms(e.w),k:e.k,a:e.a,b:e.b}));
   stub=j.stub;
 }
+
+/* G.R.I.T agent tab (15 Nov 2026): the owner sets the mode; everything else is the agent's own decision */
+let AG=null;
+const AGM={off:'OFF',shadow:'SHADOW',sim:'SIM TRADING'};
+async function pollAgent(){try{const r=await fetch('api/agent',{cache:'no-store'});if(r.ok){AG=await r.json();renderAgent()}}catch(e){}}
+function setAgent(m){if(!need())return;const go=()=>post('agent',{mode:m}).then(()=>{pollAgent();poll()});
+  if(m==='sim')modal('Let the G.R.I.T agent trade?','<p>The agent places SIMULATED orders on the demo exchange by itself: what to buy, how much, when to exit. Every order still passes the risk engine. KILL stops it at once.</p>','Start SIM trading',go);
+  else go()}
+function renderAgent(){
+  const a=AG;if(!a)return;const L=a.limits,U=L.used,P=x=>(x*100).toFixed(1)+'%',live=a.mode!=='off';
+  const pl=$('#agPill');pl.textContent='G.R.I.T AGENT: '+(a.killed&&!live?'OFF (KILLED)':AGM[a.mode]);pl.className='pill '+(a.mode==='sim'?'ok':a.mode==='shadow'?'sim':'lock');
+  $('#agInfo').innerHTML=[['Model','grit-trader v0 · rules from your strategies\' indicators (not trained yet)'],['Next model','grit-trader v1 · trained on the agent\'s logged trades · GPU from 21 Nov'],['Endpoint and key','none needed for v0 (runs inside the engine). A future G.R.I.T endpoint reads GRIT_ENDPOINT / GRIT_API_KEY from secrets, never the repo'],['Stage','1 · historical demo exchange · SIMULATION only']].map(x=>'<tr><td class="mute">'+x[0]+'</td><td class="w">'+H(x[1])+'</td></tr>').join('');
+  $('#agModes').innerHTML=['off','shadow','sim'].map(m=>'<button class="btn sm'+(a.mode===m?' pri':'')+'" data-agm="'+m+'" title="'+(m==='off'?'Agent does nothing':m==='shadow'?'Agent decides and logs; no orders are sent':'Agent places simulated orders')+'">'+AGM[m]+(m==='shadow'?' · decides, no orders':m==='sim'?' · demo exchange':'')+'</button>').join('')+'<span class="pill lock">BROKER TEST · locked</span><span class="pill lock">LIVE · locked</span>';
+  $('#agLim').innerHTML='<tr><th>Limit</th><th>Value</th><th>Now</th></tr>'+[['Stop per trade',P(L.stop),'on every position'],['Daily profit lockout','+'+P(L.lock),(U.pnl>=0?'+':'')+P(U.pnl)],['Daily loss',P(L.daily),(U.pnl>=0?'+':'')+P(U.pnl)],['Per-strategy daily loss',P(L.strat),'-'],['Actions per second',L.rate+' hard cap',(S.rate||0)+''],['Gross exposure',P(L.gross)+(L.gross<=1?' (no leverage)':''),P(U.gross)],['Open positions',L.pos,U.pos+' of '+L.pos],['Open orders',L.orders,U.orders+' of '+L.orders]].map(x=>'<tr><td>'+x[0]+'</td><td>'+x[1]+'</td><td>'+x[2]+'</td></tr>').join('');
+  const st=(t,c)=>'<span class="pill '+c+'">'+t+'</span>';
+  $('#agIn').innerHTML='<tr><th>Input</th><th>Source</th><th>v0</th></tr>'+[['Strategy indicators','Momentum and mean reversion on 1 year of NSE closes ('+a.hist+' of '+a.n+' instruments have it)',a.hist?st('in use','ok'):st('no history','bad')],['Prices and book','Replay of the last NSE day, demo order book',st('in use','ok')],['Own book','Positions, open orders, limits left',st('in use','ok')],['Headlines','Adverse media feed (NSE filings, GDELT)',st('not used yet','lock')],['Filings','NSE / BSE announcements',st('not used yet','lock')],['Connector links','Company connector graph',st('not used yet','lock')]].map(x=>'<tr><td>'+x[0]+'</td><td class="w mute">'+H(x[1])+'</td><td>'+x[2]+'</td></tr>').join('');
+  const aC=t=>t==='BUY'?'ok':t==='CLOSE'?'sim':t==='MOVE EXIT'?'sim':t==='STOP'?'bad':'lock',rC=t=>t==='PASS'?'ok':t.indexOf('VETO')===0?'bad':'lock';
+  $('#agFeedN').textContent=a.stats.decisions+' decisions this session'+(live?'':' · agent OFF');
+  $('#agFeed').innerHTML='<tr><th>Time</th><th>Action</th><th>Instrument</th><th>Qty</th><th>Price</th><th>Stop / target</th><th>Conf.</th><th style="text-align:left">Reason</th><th style="text-align:left">Inputs used</th><th>Risk engine</th><th>Order</th></tr>'+(a.decisions.map(d=>'<tr title="'+H(tip(d.ns,d.mt))+'"><td class="mute">'+(d.mt>=0?mtx(d.mt):tms(d.ns))+'</td><td>'+st(H(d.act),aC(d.act))+'</td><td>'+H(d.s||'-')+'</td><td>'+H(d.q||'-')+'</td><td>'+H(d.px||'-')+'</td><td>'+H(d.st&&d.st!=='-'?d.st+' / '+d.tg:'-')+'</td><td>'+(d.c>=0?d.c.toFixed(2):'-')+'</td><td class="w">'+H(d.why)+'</td><td class="w mute">'+H(d.in)+'</td><td>'+(d.risk&&d.risk!=='-'?st(H(d.risk),rC(d.risk)):'-')+'</td><td class="mute">'+H(d.ord)+'</td></tr>').join('')||'<tr><td colspan="11" class="mute w">No decisions yet. Set the agent to SHADOW or SIM TRADING.</td></tr>');
+  $('#agPos').innerHTML='<tr><th>Instrument</th><th>Qty</th><th>Entry</th><th>Last</th><th>P&amp;L</th><th>Exit</th><th>Target</th><th style="text-align:left">Plan</th></tr>'+(a.positions.map(p=>'<tr><td>'+H(p.s)+(p.paper?' <span class="mute">paper</span>':'')+'</td><td>'+p.q+'</td><td>'+p.e.toFixed(2)+'</td><td>'+p.p.toFixed(2)+'</td><td class="'+cls(p.pnl)+'">'+inr(p.pnl)+'</td><td>'+p.stop.toFixed(2)+(p.be?' <span class="mute">entry</span>':'')+'</td><td>'+p.tgt.toFixed(2)+'</td><td class="w mute">'+H(p.plan)+'</td></tr>').join('')||'<tr><td colspan="8" class="mute w">No open agent positions.</td></tr>');
+  const s2=a.stats,tot=s2.realized+s2.unreal;
+  $('#agScore').innerHTML=[['P&L (closed + open)',inr(tot),cls(tot)],['Closed trades',s2.trades,''],['Hit rate',s2.trades?Math.round(100*s2.wins/s2.trades)+'%':'-',''],['Open positions',s2.open,''],['Decisions',s2.decisions,'']].map(x=>'<tr><td class="mute">'+x[0]+'</td><td class="'+x[2]+'">'+x[1]+'</td></tr>').join('')+'<tr><td colspan="2" class="mute w" style="font-size:11px">SIM or SHADOW (paper) results on a replayed day. Not a measure of real performance.</td></tr>';
+  $('#agTrain').innerHTML=[['Lines logged',s2.logged+' (decisions and closed trades)'],['Each line holds','state, action, reason, risk verdict; closed trades add P&L and who closed'],['File','data/agent/decisions.jsonl in the Codespace; never committed (data/ is ignored)'],['Training run','GPU from 21 Nov, then nightly']].map(x=>'<tr><td class="mute">'+x[0]+'</td><td class="w">'+H(x[1])+'</td></tr>').join('');
+}
 /* fast poll: prices, book, positions every 0.5 s; full state (history, ledger, curve) every 3 s */
 let fails=0,pc=0,busy=false;
 async function poll(){
@@ -558,13 +580,14 @@ async function poll(){
 async function initApi(){
   try{const r=await fetch('api/state',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(j.engine!=='cpp')return;
     API=true;applyState(j);
-    render();setInterval(poll,500)}catch(e){render()}
+    render();setInterval(poll,500);pollAgent();setInterval(pollAgent,1000)}catch(e){render()}
 }
 document.addEventListener('click',e=>{
   if(e.target.id==='ckAll'){(S.lots||[]).forEach(l=>{if(!l.c){if(e.target.checked)SELL.add(l.id);else SELL.delete(l.id)}});render();return}
-  const t=e.target.closest('[data-act],[data-sel],[data-cx],[data-close],[data-ck],[data-amt],[data-node],[data-open],[data-flt]');if(!t)return;
+  const t=e.target.closest('[data-agm],[data-act],[data-sel],[data-cx],[data-close],[data-ck],[data-amt],[data-node],[data-open],[data-flt]');if(!t)return;
   const d=t.dataset;
-  if(d.act)ACT[d.act]();
+  if(d.agm)setAgent(d.agm);
+  else if(d.act)ACT[d.act]();
   else if(d.sel){S.sel=+d.sel;$('#tSym').value=I[S.sel].s;render();if(API)poll()}
   else if(d.cx&&API){post('cancel',{id:d.cx}).then(poll)}
   else if(d.close&&API){post('close',{ids:d.close}).then(poll)}

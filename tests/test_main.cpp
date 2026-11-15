@@ -4,6 +4,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "mc/agent.hpp"
 #include "mc/backtest.hpp"
 #include "mc/latency.hpp"
 #include "mc/order_book.hpp"
@@ -710,6 +711,55 @@ static void test_session_cash_and_blocked_exit() {
   t.kill(5 * sec); t.pump(7 * sec); CHECK(t.position(0).qty == 0 && t.live_orders() == 0); // kill: cancels first, then closes
 }
 
+// G.R.I.T agent v0: OFF by default, decides with reasons, every order through the risk engine, the owner's
+// kill switch turns it off and it cannot turn itself on, SHADOW sends nothing, training lines are written.
+static void test_agent() {
+  const Ts sec = 1000000000LL;
+  LiveSim s = make_sim();
+  CHECK(s.set_day(0, day_aaa()));
+  CHECK(s.set_speed(25));
+  Agent a; a.resize(s.instruments());
+  std::vector<Bar> up;
+  for (int k = 0; k < 60; ++k) { Bar b; b.date = 20260801 + k; b.o = b.h = b.l = b.c = 90000 + 200 * k; up.push_back(b); }
+  a.set_history(0, up);
+  CHECK(a.with_history() == 1);
+  Ts t = 0;
+  for (int k = 1; k <= 14; ++k) { t = k * sec; s.step(t); a.tick(s, t); }   // replay past 09:20; agent OFF
+  CHECK(s.market_time() >= Agent::kFirstEntry && a.mode() == AgentMode::Off && a.decisions().empty());
+  auto round = [&](Price px) { t += 5 * sec; s.set_price(0, px); s.step(t, false); a.tick(s, t); s.pump(t); };
+  CHECK(s.set_speed(0));
+  CHECK(a.set_mode(s, AgentMode::Sim, t).empty());
+  const std::size_t orders0 = s.orders().size();
+  round(100600);                                                   // above the open, momentum up: BUY
+  const Agent::Decision& buy = a.decisions().back();
+  CHECK(buy.act == "BUY" && buy.sym == "AAA" && buy.risk == "PASS" && !buy.reason.empty() && buy.conf > 0.5);
+  CHECK(s.orders().size() == orders0 + 1 && s.orders().back().src == "GRIT-AGENT");
+  CHECK(s.lots().size() == 1 && s.lots()[0].qty > 0);
+  const double entry = s.lots()[0].entry;
+  round(static_cast<Price>(entry * 101.3));                        // +1.3%: exit moves to entry
+  CHECK(a.decisions().back().act == "MOVE EXIT");
+  round(static_cast<Price>(entry * 99.9));                         // back under entry: CLOSE
+  CHECK(a.decisions().back().act == "CLOSE");
+  round(static_cast<Price>(entry * 99.9));
+  CHECK(s.lots()[0].qty == 0);
+  bool outcome = false, decision = false;
+  for (const auto& l : a.drain_log()) { outcome = outcome || l.find("\"type\":\"outcome\"") != std::string::npos; decision = decision || l.find("\"act\":\"BUY\"") != std::string::npos; }
+  CHECK(outcome && decision && a.drain_log().empty());
+  // the owner's kill switch: the agent goes OFF and cannot be set to SIM until the owner re-arms
+  s.kill(t); a.on_kill(s, t);
+  CHECK(a.mode() == AgentMode::Off && !a.set_mode(s, AgentMode::Sim, t).empty());
+  const std::size_t d0 = a.decisions().size();
+  round(100800);
+  CHECK(a.decisions().size() == d0);                               // OFF: no decision at all
+  s.rearm();
+  CHECK(a.set_mode(s, AgentMode::Shadow, t).empty());
+  const std::size_t orders1 = s.orders().size();
+  round(100800);
+  CHECK(a.decisions().back().act == "BUY" && a.decisions().back().risk == "not sent (SHADOW)");
+  CHECK(s.orders().size() == orders1);                             // SHADOW sends nothing
+  CHECK(a.json(s).find("\"mode\":\"shadow\"") != std::string::npos);
+}
+
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -730,6 +780,7 @@ int main() {
       {"session: kill closes every order and position", test_session_kill_flattens},
       {"session: account survives a restart (snapshot and restore)", test_session_persistence},
       {"session: cash never negative; exit blocked by own bid is refused, not stuck", test_session_cash_and_blocked_exit},
+      {"G.R.I.T agent: off by default, reasons, risk engine, kill, shadow, training log", test_agent},
   };
   int failed_tests = 0;
   for (const T& t : tests) {

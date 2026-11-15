@@ -135,6 +135,15 @@ class LiveSim {
   Price best_ask(std::size_t i) const { return inst_[i].book.best_ask(); }
   Price best_bid(std::size_t i) const { return inst_[i].book.best_bid(); }
   std::size_t actions_last_second(Ts now) { prune(now); return stamps_.size(); }
+  // read-only views for the G.R.I.T agent (include/mc/agent.hpp)
+  const std::string& sym(std::size_t i) const { return inst_[i].sym; }
+  Qty lot_size(std::size_t i) const { return inst_[i].lot; }
+  Price day_open(std::size_t i) const { return inst_[i].has_day ? inst_[i].day.o : inst_[i].start; }
+  bool has_replay() const { return has_replay_; }
+  std::int64_t wall_ns() const { return wall_ns_; }
+  const RiskLimits& limits() const { return lim_; }
+  double gross_now() const { return pf_.gross(marks_); }
+  int open_positions() const { return pf_.open_positions(); }
 
   // A new order from the ticket or the stub. Returns an empty string if accepted, otherwise the veto reason.
   std::string submit(std::size_t i, Side side, OrdType type, Qty qty, Price px, const std::string& src, Ts now) {

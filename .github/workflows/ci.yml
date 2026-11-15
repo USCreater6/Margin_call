@@ -21,7 +21,12 @@ jobs:
           sleep 1
           curl -fsS localhost:8099/api/state | grep -q '"lots":\[\]'                       # kill closed the position
           curl -fsS -X POST localhost:8099/api/order -d '{"sym":"RELIANCE","side":"BUY","type":"MARKET","qty":1}' | grep -q 'Kill switch'
+          curl -fsS -X POST localhost:8099/api/agent -d '{"mode":"sim"}' | grep -q 'Re-arm first'          # killed: the agent stays OFF
           curl -fsS -X POST localhost:8099/api/rearm -d '{}' | grep -q '"ok":true'
+          curl -fsS localhost:8099/api/agent | grep -q '"mode":"off"'                                   # G.R.I.T agent starts OFF
+          curl -fsS -X POST localhost:8099/api/agent -d '{"mode":"live"}' | grep -q '"ok":false'        # no live mode exists
+          curl -fsS -X POST localhost:8099/api/agent -d '{"mode":"shadow"}' | grep -q '"ok":true'
+          curl -fsS localhost:8099/api/agent | grep -q '"mode":"shadow"'
           curl -fsS -X POST localhost:8099/api/order -d '{"sym":"TCS","side":"SELL","type":"MARKET","qty":1}' | grep -q 'NO_SHORT'
           curl -fsS -o /dev/null -w "%{http_code}" --path-as-is "localhost:8099/%2e%2e/CMakeLists.txt" | grep -q 400
           kill %1
