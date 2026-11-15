@@ -36,6 +36,15 @@ Order of the list = recommended order. "Needs you" = a decision or input only yo
 
 ## C. Stage 2 — live data + simulated orders (needs your approval to start)
 
+**Started 16 Nov 2026 (owner approved): free live prices for the demo.** tools/live_feed.py reads NSE's cm-market
+data server (free, no account; about once a minute, delayed 1-3 minutes; terms: informational / not for real-time
+trading) in market hours and writes data/live/quotes.tsv; the engine trades demo orders at those prices and replays
+the last official day otherwise. NIFTY-FUT and NIFTY options are DERIVED from the live NIFTY 50 index (no free live
+F&O source without a broker account). **Must verify on the first market session:** the server's answer field names
+(it returns no data while the market is closed, so they could not be seen; the parser accepts several spellings and
+keeps raw answers in data/live/raw_*.json), and whether NSE's Akamai edge blocks Codespaces (one probe got
+"Access Denied"). Is nseindia.in NSE's own domain: not confirmed.
+
 11. **Broker choice** (needs you). Then read that broker's API docs for: market data feed,
     order types, rate limits, sandbox availability. Nothing assumed until read.
 12. **Intraday data** comes from the broker feed; free sources give end-of-day only.

@@ -923,6 +923,55 @@ static void test_session_net_pnl_and_ownership() {
   NEAR(r2.lots()[0].bc, r.lots()[0].bc);
 }
 
+// NIFTY options (16 Nov 2026): priced from the index by Black-Scholes at the implied volatility of the official close;
+// option charges (STT 0.15% of the premium on the sell); expiry square-off and expired-contract refusal; live data on/off.
+static void test_session_options_and_live() {
+  const Ts sec = 1000000000LL;
+  RiskLimits lim; lim.max_order_notional = 0;
+  // implied volatility reproduces the official close
+  const double iv = LiveSim::implied_vol(147.35, 25144.30, 25200, 4.0 / 365.0, true);
+  CHECK(iv > 0.05 && iv < 0.5);
+  NEAR(LiveSim::bs(25144.30, 25200, 4.0 / 365.0, iv, true), 147.35);
+  CHECK(LiveSim::implied_vol(10.0, 25144.30, 24650, 4.0 / 365.0, true) == 0);   // below intrinsic value: not solvable
+  CHECK(LiveSim::civil_day("1970-01-01") == 0 && LiveSim::civil_day("2026-11-17") - LiveSim::civil_day("2026-11-13") == 4);
+  LiveSim m(1e8, lim, 7);
+  m.add_instrument("NIFTY-FUT", "NSE F&O", 2517100, 10, "test", 65); m.set_segment(0, Seg::IndexFuture);
+  LiveSim::Day d; d.date = "2026-11-13"; d.o = 2522500; d.h = 2528580; d.l = 2508300; d.c = 2517100; d.pc = 2530870; d.vol_units = 2733315; m.set_day(0, d);
+  m.add_instrument("NIFTY 2026-11-17 25200 CE", "NSE F&O", 14735, 5, "test", 65);
+  LiveSim::Day od = d; od.o = 11415; od.h = 22525; od.l = 7000; od.c = 14735; od.pc = 22525; od.vol_units = 65 * 1000; m.set_day(1, od);
+  m.set_option(1, 25200, true, "2026-11-17", iv); m.set_index_link(0, 25144.30 / 25171.0);
+  m.set_wall_ns(1763000000000000000LL);
+  m.step(sec);
+  // 09:15 of the replay day: index = futures open x ratio, 4 days + 6 h 15 min to expiry
+  CHECK(m.price(1) == std::max<Price>(5, static_cast<Price>(std::llround(LiveSim::bs(25225.0 * 25144.30 / 25171.0, 25200, (4.0 * 86400 + 55800 - 33300) / (365.0 * 86400), iv, true) * 20.0)) * 5));
+  // option charges on a buy and a sell (premium value)
+  CHECK(m.submit(1, Side::Buy, OrdType::Market, 65, 0, "MANUAL", sec).empty());
+  const double bv = m.orders().back().fill_val, f0 = m.charges().total();
+  NEAR(f0, bv * 0.0003553 * 1.18 + bv * 0.000001 * 1.18 + bv * 0.00003);
+  CHECK(m.close_lots({m.lots()[0].id}, "MANUAL", 2 * sec) == 1);
+  const double sv = m.orders().back().fill_val;
+  NEAR(m.charges().stt, sv * 0.0015);
+  NEAR(m.charges().total() - f0, sv * 0.0015 + sv * 0.0003553 * 1.18 + sv * 0.000001 * 1.18);
+  // live data: futures from the live index x (futures / index), option repriced, back to the replay when it stops
+  m.set_live_index(25000.0); m.set_live(true, "2026-11-16", 3600); m.step(3 * sec, false);
+  CHECK(m.live() && m.data_date() == "2026-11-16");
+  m.step(4 * sec);
+  CHECK(m.price(0) == static_cast<Price>(std::llround(25000.0 / (25144.30 / 25171.0) * 10.0)) * 10);
+  NEAR(m.index_now(), 25000.0);
+  CHECK(m.price(1) == std::max<Price>(5, static_cast<Price>(std::llround(LiveSim::bs(25000.0, 25200, (1.0 * 86400 + 55800 - 33300 - 3600) / (365.0 * 86400), iv, true) * 20.0)) * 5));
+  m.set_live(false, "", 0);
+  CHECK(!m.live() && m.data_date() == "2026-11-13" && m.price(0) == 2522500);   // replay of the official day from 09:15
+  m.step(5 * sec); CHECK(m.market_time() <= 1.0);
+  // expiry day: open options closed at 15:20; after expiry new orders refused
+  m.set_live(true, "2026-11-17", 22200 + 1); m.step(6 * sec);
+  CHECK(m.submit(1, Side::Buy, OrdType::Market, 65, 0, "MANUAL", 6 * sec).empty() == false || m.lots().back().qty > 0);
+  m.step(7 * sec); m.pump(8 * sec);
+  int open_opt = 0; for (const auto& l : m.lots()) open_opt += l.inst == 1 && l.qty > 0;
+  CHECK(open_opt == 0);
+  m.set_live(true, "2026-11-18", 3600); m.step(9 * sec);
+  CHECK(!m.submit(1, Side::Buy, OrdType::Market, 65, 0, "MANUAL", 10 * sec).empty() && m.orders().back().code == "EXPIRED");
+}
+
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -946,6 +995,7 @@ int main() {
       {"session: stop loss / take profit per position; per-strategy daily loss; alert ids; restore guard", test_session_exits_and_strategy_loss},
       {"session: NSE charges by segment; book-size rule and split orders; JSON precision", test_session_charges_split_precision},
       {"session: net P&L before a close equals the close; lots reconcile; sells take their own lots", test_session_net_pnl_and_ownership},
+      {"session: NIFTY options priced from the index; option charges; expiry; live data on and off", test_session_options_and_live},
       {"G.R.I.T agent: off by default, reasons, risk engine, kill, shadow, training log", test_agent},
   };
   int failed_tests = 0;

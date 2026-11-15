@@ -24,6 +24,11 @@ fi
 pkill -f "build/mc_server" 2>/dev/null && sleep 1 || true
 python3 tools/fetch_latest.py --no-history > logs/fetch_latest.log 2>&1 \
   || echo "Could not fetch the NSE day (see logs/fetch_latest.log); the terminal uses the last fetched day, or labelled placeholders."
+python3 tools/fetch_options.py > logs/fetch_options.log 2>&1 \
+  || echo "Could not fetch the NIFTY options file (see logs/fetch_options.log); options are not loaded."
+# live NSE prices in market hours (data/live/quotes.tsv; the engine replays the last official day otherwise)
+pkill -f "tools/live_feed.py" 2>/dev/null || true
+nohup python3 tools/live_feed.py --loop 30 > logs/live_feed.log 2>&1 &
 # replay day written by fetch_latest (7th column of the first data row)
 day=$(awk -F, '!/^#/ && !/^symbol,/ && NF>=7 {print $7; exit}' data/latest/instruments.csv 2>/dev/null || true)
 if [ -z "$day" ] || ! grep -q "\"asof\": \"$day\"" web/data/history/_index.json 2>/dev/null; then

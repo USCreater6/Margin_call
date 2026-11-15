@@ -49,8 +49,8 @@ main{flex:1;min-height:0;padding:6px 16px}
 #v-account.on{grid-template-rows:minmax(0,1fr) minmax(0,1.15fr)}
 .side{grid-column:33 / span 16;grid-row:1 / span 2;display:flex;min-width:0;min-height:0}
 /* terminal columns (48-column grid): with the media panel open (it takes columns 33-48) and with it hidden */
-.tw{grid-column:span 12}.tb{grid-column:span 8}.tt{grid-column:span 12}.tbl{grid-column:span 13}.tp{grid-column:span 19}
-#v-terminal.nomedia:not(.alerts) .tw{grid-column:span 14}#v-terminal.nomedia:not(.alerts) .tb{grid-column:span 10}#v-terminal.nomedia:not(.alerts) .tt{grid-column:span 24}
+.tw{grid-column:span 10}.tb{grid-column:span 13}.tt{grid-column:span 9}.tbl{grid-column:span 13}.tp{grid-column:span 19}
+#v-terminal.nomedia:not(.alerts) .tw{grid-column:span 11}#v-terminal.nomedia:not(.alerts) .tb{grid-column:span 25}#v-terminal.nomedia:not(.alerts) .tt{grid-column:span 12}
 #v-terminal.nomedia:not(.alerts) .tbl{grid-column:span 22}#v-terminal.nomedia:not(.alerts) .tp{grid-column:span 26}
 /* alerts panel: takes the media column when opened; the media panel is then hidden (TV keeps playing) */
 #alertSide{grid-column:33 / span 16;grid-row:1 / span 2;display:none;min-width:0;min-height:0}
@@ -111,6 +111,33 @@ tr.sel td{background:var(--row)}tr.pick{cursor:pointer}
 .row{display:flex;flex-wrap:wrap;gap:5px;align-items:end}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mute);min-width:0}
+/* ticket: every label is one line (cut with … when narrow; the full text is in its tooltip), so the fields line up */
+label.f .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.tt .g2{align-items:end}
+/* watchlist: tabs, search, list */
+.tabs{display:inline-flex;gap:2px}.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:1px 6px;color:var(--mute);cursor:pointer;font-size:11.5px;font-family:var(--sans);text-transform:none;letter-spacing:0}
+.tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+.srch{position:relative;padding:4px 6px 2px}
+.srch input{width:100%;padding:3px 6px;font-family:var(--mono);font-size:12px}
+#sr{position:absolute;left:6px;right:6px;top:30px;z-index:6;background:var(--panel);border:1px solid var(--line);border-radius:3px;display:none;max-height:280px;overflow:auto;box-shadow:0 4px 14px rgba(0,0,0,.3)}
+#sr div{padding:3px 8px;cursor:pointer;font-family:var(--mono);font-size:12px;display:flex;justify-content:space-between;gap:8px}
+#sr div:hover,#sr div.on{background:var(--row)}
+.wlbar{gap:4px;align-items:center;padding:0 6px 3px;border-bottom:1px solid var(--line)}
+#watch{table-layout:fixed;width:100%;font-size:11.5px}#watch td,#watch th{padding:0 4px;height:21px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#watch .c2{width:68px}#watch .c3{width:58px}#watch .c4{width:16px}#watch td.x{color:var(--mute);cursor:pointer;text-align:center}
+.lv{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--good);margin-right:3px;vertical-align:middle}
+/* chart / book / option chain */
+.cxp{display:flex;flex-direction:column;flex:1;min-height:0}
+.chead{display:flex;gap:4px 10px;align-items:baseline;padding:3px 8px;font-family:var(--mono);font-size:12px;flex-wrap:wrap}
+.chead b{font-size:14px}#cDay{flex-basis:100%;font-size:11px}
+.tf button{background:none;border:1px solid var(--line);border-radius:3px;padding:0 6px;font-size:11px;cursor:pointer;color:var(--mute)}
+.tf button.on{border-color:var(--accent);color:var(--accent)}
+#cv{flex:1;min-height:0;position:relative}#cv canvas{position:absolute;inset:0;width:100%;height:100%}
+.cnote{font-size:10.5px;color:var(--mute);padding:1px 8px 3px;font-family:var(--sans)}
+#oc{font-size:11.5px}#oc td,#oc th{padding:0 5px;height:20px}#oc td.k{text-align:center;font-weight:600;background:var(--row)}#oc th.k{text-align:center}
+#oc tr.atm td{border-top:2px solid var(--accent)}#oc td.itm{background:color-mix(in srgb,var(--warn) 9%,transparent)}#oc td.p{cursor:pointer;text-decoration:underline dotted}
+#pop{position:fixed;right:12px;top:44px;z-index:9;max-width:480px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 12px;font-size:12.5px;display:none;box-shadow:0 6px 20px rgba(0,0,0,.35)}
+#pop.on{display:block}#pop td{white-space:normal;text-align:left;vertical-align:top}
 input,select{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;font-family:var(--mono);width:100%}
 header select{width:auto;font-size:12px}
 .bar{height:5px;background:var(--row);border-radius:3px;overflow:hidden;min-width:60px}
@@ -185,7 +212,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
   <div class="brand">MARGIN_CALL</div>
   <nav id="nav"><a href="#terminal">Terminal</a><a href="#connector">Connector</a><a href="#engine">G.R.I.T agent</a><a href="#account">Account</a><a href="#risk">Risk</a><a href="#admin">Admin</a></nav>
   <div class="spacer"></div>
-  <span class="pill" id="state">ARMED</span><span class="pill lock" title="Locked until Stage 4 approval">LIVE: LOCKED</span>
+  <div class="kv" id="dsK" title="Where the prices come from: click for details" style="cursor:pointer"><span id="dsL">Data</span><b id="dsP">-</b></div><span class="pill" id="state">ARMED</span><span class="pill lock" title="Locked until Stage 4 approval">LIVE: LOCKED</span>
   <div class="kv" id="hEqK">Demo equity<b id="hEq">-</b></div>
   <div class="kv" id="hPnlK" title="Equity now minus equity at the start of today (deposits excluded). NSE charges are included.">Day P&amp;L (SIM)<b id="hPnl">-</b></div>
   <div class="kv" title="Every order, cancel and exit counts. Never more than 8 in any rolling second.">Actions / 1s<b id="hRate">0 / 8</b></div>
@@ -197,16 +224,23 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 <main>
 
 <section class="view" id="v-terminal">
-  <div class="panel tw"><h2>Watchlist <span class="row" style="gap:4px;align-items:center"><span class="pill sim" id="wlSrc" title="">-</span><select id="spd" aria-label="Replay speed" title="Replay speed" style="width:auto;font-size:11px;padding:0 2px"><option value="1" title="Real time: the session takes 6 h 15 min">1× live</option><option value="2">2×</option><option value="6.25" title="Whole session in 60 minutes">60 min</option><option value="12.5" title="Whole session in 30 minutes">30 min</option><option value="25" title="Whole session in 15 minutes">15 min</option><option value="0">Pause</option></select><button class="btn sm" data-act="restart" title="Start the day again from 09:15 (only when flat)">↺</button></span></h2><div class="fix"><table id="watch"></table></div></div>
-  <div class="panel tb"><h2>Book <span id="bookSym" class="mono"></span></h2><div class="fix"><table id="book"></table></div></div>
+  <div class="panel tw"><h2>Watchlist <span class="tabs" id="wlT"><button data-w="my" class="on">My list</button><button data-w="n50">NIFTY 50</button></span></h2>
+    <div class="srch"><input id="q" placeholder="Search any NSE stock or NIFTY option…" autocomplete="off" aria-label="Search NSE stocks and NIFTY options"><div id="sr"></div></div>
+    <div class="row wlbar"><span class="pill sim" id="wlSrc" title="">-</span><select id="spd" aria-label="Replay speed" title="Replay speed" style="width:auto;font-size:11px;padding:0 2px"><option value="1" title="Real time: the session takes 6 h 15 min">1× live</option><option value="2">2×</option><option value="6.25" title="Whole session in 60 minutes">60 min</option><option value="12.5" title="Whole session in 30 minutes">30 min</option><option value="25" title="Whole session in 15 minutes">15 min</option><option value="0">Pause</option></select><button class="btn sm" data-act="restart" title="Start the day again from 09:15 (only when flat)">↺</button></div>
+    <div class="fit" style="overflow-y:auto"><table id="watch"></table></div></div>
+  <div class="panel tb"><h2><span class="tabs" id="cxT"><button data-c="chart" class="on">Chart</button><button data-c="book">Book</button><button data-c="oc">Option chain</button></span><span id="bookSym" class="mono"></span></h2>
+    <div id="pChart" class="cxp"><div class="chead"><b id="cSym"></b><span id="cLast"></span><span class="tf" id="tf"><button data-tf="60" class="on">1m</button> <button data-tf="300">5m</button> <button data-tf="900">15m</button> <button data-tf="D">1D</button></span><span id="cDay" class="mute"></span></div>
+      <div id="cv"><canvas id="cnv"></canvas></div><div class="cnote" id="cNote"></div></div>
+    <div id="pBook" class="cxp" style="display:none"><div class="fix"><table id="book"></table></div></div>
+    <div id="pOc" class="cxp" style="display:none"><div class="cnote" id="ocNote" style="border-bottom:1px solid var(--line)"></div><div id="ocS" style="flex:1;min-height:0;overflow:auto"><table id="oc"></table></div></div></div>
   <div class="panel tt"><h2>Order ticket <span class="pill sim">SIM</span></h2><div class="fix"><div class="body">
     <div class="g2">
-      <label class="f" for="tSym">Instrument<select id="tSym"></select></label>
-      <label class="f" for="tType">Type<select id="tType"><option>MARKET</option><option>LIMIT</option></select></label>
-      <label class="f" for="tQty"><span id="tQtyL">Quantity</span><input id="tQty" type="number" min="1" value="1"></label>
-      <label class="f" for="tPx">Limit price<input id="tPx" type="number" step="0.05" placeholder="market"></label>
-      <label class="f" for="tSl" title="BUY only. % below the entry price; the position closes at market when the last price falls there. At most 2% (the engine's hard stop).">Stop loss % (max 2)<input id="tSl" type="number" step="0.1" min="0" max="2" placeholder="none"></label>
-      <label class="f" for="tTp" title="BUY only. % above the entry price; the position closes at market when the last price rises there.">Take profit %<input id="tTp" type="number" step="0.1" min="0" placeholder="none"></label>
+      <label class="f" for="tSym"><span class="lb">Instrument</span><select id="tSym"></select></label>
+      <label class="f" for="tType"><span class="lb">Type</span><select id="tType"><option>MARKET</option><option>LIMIT</option></select></label>
+      <label class="f" for="tQty"><span id="tQtyL" class="lb">Quantity</span><input id="tQty" type="number" min="1" value="1"></label>
+      <label class="f" for="tPx"><span class="lb">Limit price</span><input id="tPx" type="number" step="0.05" placeholder="market"></label>
+      <label class="f" for="tSl" title="BUY only. % below the entry price; the position closes at market when the last price falls there. At most 2% (the engine's hard stop)."><span class="lb">Stop loss % (max 2)</span><input id="tSl" type="number" step="0.1" min="0" max="2" placeholder="none"></label>
+      <label class="f" for="tTp" title="BUY only. % above the entry price; the position closes at market when the last price rises there."><span class="lb">Take profit %</span><input id="tTp" type="number" step="0.1" min="0" placeholder="none"></label>
       <button class="btn buy" data-act="buy">BUY</button><button class="btn sell" data-act="sell">SELL</button>
     </div>
     <p class="note" id="tFill"></p>
@@ -314,6 +348,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 </main>
 <footer><div id="tape"></div></footer>
 
+<div id="pop"></div>
 <div id="modal"><div class="box"><h3 id="mT"></h3><div id="mB"></div><div class="row" style="margin-top:10px;justify-content:flex-end"><button class="btn" data-act="mNo">Cancel</button><button class="btn pri" id="mOk">Confirm</button></div></div></div>
 
 <script>
@@ -378,12 +413,13 @@ function render(){
   const kb=$('#killBtn');kb.textContent=S.killed?'RE-ARM':'KILL';kb.className='btn '+(S.killed?'arm':'kill');
   const st=$('#state');st.textContent=S.killed?'KILLED':S.halt?'HALTED':S.lock?'PROFIT LOCK':'ARMED';st.className='pill '+(S.killed||S.halt?'bad':S.lock?'warn':'ok');
   $('#stubBtn').textContent=stub?'Stop stub signals':'Start stub signals';
-  $('#watch').innerHTML='<tr><th>Instrument</th><th>Venue</th><th>Last</th><th>Chg</th></tr>'+(I.map((i,k)=>{const c=i.pc?i.p/i.pc-1:0,dy=i.day;return'<tr class="pick'+(k===S.sel?' sel':'')+'" data-sel="'+k+'" title="'+H((dy?'NSE '+dy.date+': open '+dy.o.toFixed(2)+' · high '+dy.h.toFixed(2)+' · low '+dy.l.toFixed(2)+' · close '+dy.c.toFixed(2)+' · previous close '+i.pc.toFixed(2)+'. ':'No NSE day data: price held. ')+'Lot '+i.lot+'. Depth: '+i.depth+'. Chg is against the previous close.')+'"><td>'+H(i.s)+(i.lot>1?' <span class="mute">×'+i.lot+'</span>':'')+'</td><td class="mute">'+H(i.v)+'</td><td>'+i.p.toFixed(2)+'</td><td class="'+cls(c)+'">'+pct(c)+'</td></tr>'}).join('')||'<tr><td colspan="4" class="mute w">No instruments: engine not running.</td></tr>');
+  renderWL();
   const b=I[S.sel];$('#bookSym').textContent=b?b.s:'';
   let bk='<tr><th>Price</th><th>Size</th></tr>';
   if(S.book){const A=S.book.asks.slice().reverse(),B=S.book.bids,rw=(x,c)=>'<tr><td class="'+c+'">'+x[0].toFixed(2)+'</td><td>'+x[1].toLocaleString('en-IN')+'</td></tr>';
     bk+=A.map(x=>rw(x,'dn')).join('')+'<tr><td class="mute" colspan="2">spread '+(A.length&&B.length?(S.book.asks[0][0]-B[0][0]).toFixed(2):'-')+'</td></tr>'+B.map(x=>rw(x,'up')).join('')}
   $('#book').innerHTML=bk;
+  renderCX();
   if(!NEWS)$('#news').innerHTML='<tr><th>Time</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline (sample)</th></tr>'+news.slice(0,3).map(x=>'<tr><td>'+x.t+'</td><td><span class="pill '+(x.k==='ADVERSE'?'bad':'lock')+'">'+x.k+'</span></td><td>'+x.g+'</td><td class="w">'+x.m+'</td></tr>').join('');
   if(NEWS)renderNews();
   if(!NEWS)setTape(HEAD.map(h=>'<span>SAMPLE · <b class="mute">'+h[0]+'</b> · '+h[2]+'</span>').join(''));
@@ -432,7 +468,7 @@ function render(){
   $('#daySum').innerHTML='<tr><th>Item</th><th>Value</th></tr>'+[['Day P&L (SIM, vs start of today)',inr(d),cls(d)],['Total P&L since funding',inr(tot),cls(tot)],['Realized',inr(S.real),cls(S.real)],['Unrealized',inr(un),cls(un)],['NSE charges',inr(-S.fees),''],['Turnover',inr(S.turn),''],['Orders placed',S.orders.length,''],['Filled',cnt(o=>o.st==='FILLED'),''],['Rejected by risk',cnt(o=>o.st==='REJECTED_RISK'),''],['Cancelled',cnt(o=>o.st==='CANCELLED'),''],['Open',openOrd().length,''],['From AI stub',cnt(o=>o.src==='AI-STUB'),'']].map(r=>'<tr><td>'+r[0]+'</td><td class="'+r[2]+'">'+r[1]+'</td></tr>').join('');
   $('#histN').textContent=S.orders.length+' orders';
   $('#hist').innerHTML='<tr><th>Order</th><th>Time</th><th>Source</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Type</th><th>Price</th><th>State</th><th style="text-align:left">Risk reason</th></tr>'+(S.orders.map(o=>'<tr><td>'+o.id+'</td><td>'+o.t+'</td><td class="mute">'+o.src+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+o.type+'</td><td>'+pxCell(o)+'</td><td>'+o.st+'</td><td class="w">'+H(o.why||'')+'</td></tr>').join('')||'<tr><td colspan="10" class="mute">No simulated orders yet today.</td></tr>');
-  $('#expo').innerHTML='<tr><th>Instrument</th><th>Qty</th><th>Value</th><th>% of equity</th><th>Share</th></tr>'+I.map(i=>{const p=S.pos[i.s],v=p?Math.abs(p.q*i.p):0;return'<tr><td>'+i.s+'</td><td>'+(p?p.q:0)+'</td><td>'+inr(v)+'</td><td>'+pct(v/eq)+'</td><td><div class="bar"><i style="width:'+Math.min(100,v/eq*100).toFixed(0)+'%"></i></div></td></tr>'}).join('');
+  $('#expo').innerHTML='<tr><th>Instrument</th><th>Qty</th><th>Value</th><th>% of equity</th><th>Share</th></tr>'+I.filter(i=>S.pos[i.s]).map(i=>{const p=S.pos[i.s],v=p?Math.abs(p.q*i.p):0;return'<tr><td>'+i.s+'</td><td>'+(p?p.q:0)+'</td><td>'+inr(v)+'</td><td>'+pct(v/eq)+'</td><td><div class="bar"><i style="width:'+Math.min(100,v/eq*100).toFixed(0)+'%"></i></div></td></tr>'}).join('');
   $('#revt').innerHTML=rows(S.audit.filter(x=>['RISK VETO','STOP','HALT','LOCKOUT','KILL SWITCH','CANCEL ALL','FLATTEN','RE-ARM'].includes(x.k)).slice(0,60));
   $('#strat').innerHTML='<tr><th>Strategy</th><th>Phase</th><th>Allocation</th><th>Status</th></tr>'+STR.map(x=>'<tr><td>'+x.n+'</td><td class="mute">'+x.ph+'</td><td>'+(x.a?pct(x.a):'-')+'</td><td>'+(x.n==='G.R.I.T agent'?'<span class="pill sim">SET ON ITS TAB</span>':x.a?'<span class="pill" title="Runs in the backtest (results on the Admin page); not connected to the terminal session">BACKTEST ONLY</span>':'<span class="pill lock">LOCKED</span>')+'</td></tr>').join('')
     +'<tr><th>Today, per source</th><th>P&amp;L</th><th>Limit</th><th>Status</th></tr>'+((S.strats||[]).map(x=>'<tr><td>'+H(x.src)+'</td><td class="'+cls(x.pnl)+'">'+inr(x.pnl)+'</td><td>'+(x.limited?inr(-S.strat_cap*ds):'<span class="mute">global only</span>')+'</td><td>'+(x.halted?'<span class="pill bad">HALTED</span>':'<span class="pill ok">OK</span>')+'</td></tr>').join('')||'<tr><td colspan="4" class="mute">No orders today.</td></tr>');
@@ -558,7 +594,105 @@ $('#selMode').onchange=e=>{P.mode=e.target.value;theme()};
 new MutationObserver(theme).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',theme);
 
-var ALLPOS=false;let mCb=null;
+var ALLPOS=false;/* ---- watchlist: My list (original + owner-added) and NIFTY 50; search over every NSE share and the NIFTY options ---- */
+let WL='my',CX='chart',TF='60',WLD={base:[],watch:[],nifty50:[],live:{}},UNI=null,HITS=[],HI=0,OCS=0;
+const selSym=()=>(I[S.sel]||{}).s||'';
+function selectSym(sym){const k=I.findIndex(i=>i.s===sym);if(k<0)return;S.sel=k;$('#tSym').value=sym;tLabel();HOV=-1;CH0=null;render();if(API)poll()}
+async function loadWL(){try{const r=await fetch('api/watchlist',{cache:'no-store'});if(r.ok){WLD=await r.json();render()}}catch(e){}}
+async function loadUni(){try{const r=await fetch('data/universe.json',{cache:'no-store'});if(r.ok)UNI=await r.json()}catch(e){}}
+function optLbl(i){const o=i.opt;return o?o.k+' '+o.cp+' <span class="mute">'+o.exp.slice(8)+['','JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][+o.exp.slice(5,7)]+'</span>':H(i.s)}
+function renderWL(){
+  const list=(WL==='my'?WLD.base.concat(WLD.watch.filter(x=>!WLD.base.includes(x))):WLD.nifty50);
+  const rows=list.map(sym=>{const k=I.findIndex(i=>i.s===sym);if(k<0)return'';const i=I[k],c=i.pc?i.p/i.pc-1:0,dy=i.day;
+    return'<tr class="pick'+(k===S.sel?' sel':'')+'" data-sel="'+k+'" title="'+H((i.lv?'LIVE NSE price. ':'')+(dy?'NSE '+dy.date+': open '+dy.o.toFixed(2)+' · high '+dy.h.toFixed(2)+' · low '+dy.l.toFixed(2)+' · close '+dy.c.toFixed(2)+' · previous close '+i.pc.toFixed(2)+'. ':'')+'Lot '+i.lot+'. '+i.src+'. Chg is against the previous close.')+'"><td>'+(i.lv?'<span class="lv"></span>':'')+(i.opt?optLbl(i):H(i.s)+(i.lot>1?' <span class="mute">×'+i.lot+'</span>':''))+'</td><td>'+i.p.toFixed(2)+'</td><td class="'+cls(c)+'">'+pct(c)+'</td>'+(WL==='my'?'<td class="x"'+(WLD.base.includes(sym)?'>':' data-rm="'+H(sym)+'" title="Remove from my list">✕')+'</td>':'')+'</tr>'}).join('');
+  $('#watch').innerHTML='<tr><th>Instrument</th><th class="c2">Last</th><th class="c3">Chg</th>'+(WL==='my'?'<th class="c4"></th>':'')+'</tr>'+(rows||'<tr><td colspan="4" class="mute">'+(I.length?'Loading…':'No instruments: engine not running.')+'</td></tr>');
+}
+function search(){
+  const q=$('#q').value.trim().toUpperCase(),sr=$('#sr');
+  if(!q){sr.style.display='none';return}
+  const syms=(UNI&&UNI.symbols)||[],a=syms.filter(x=>x[0].startsWith(q)).concat(syms.filter(x=>!x[0].startsWith(q)&&x[0].includes(q))).slice(0,10);
+  const qq=q.replace(/ /g,''),o=I.filter(i=>i.opt&&i.s.replace(/ /g,'').includes(qq)).slice(0,8);
+  HITS=a.map(x=>x[0]).concat(o.map(i=>i.s));HI=0;
+  sr.innerHTML=a.map((x,k)=>'<div data-h="'+H(x[0])+'" class="'+(k===HI?'on':'')+'"><span>'+H(x[0])+'</span><span class="mute">NSE · close '+x[1].toFixed(2)+'</span></div>').join('')+
+    o.map(i=>'<div data-h="'+H(i.s)+'"><span>'+H(i.s)+'</span><span class="mute">option · exp '+i.opt.exp+'</span></div>').join('')||'<div class="mute">No NSE share or NIFTY option matches'+(UNI?'':' (share list still loading)')+'</div>';
+  sr.style.display='block';
+}
+async function pick(sym){$('#q').value='';$('#sr').style.display='none';const r=await post('watch',{sym});if(!r.ok)return;await loadWL();await poll();WL='my';tabs('#wlT','w','my');selectSym(sym)}
+function tabs(sel,key,val){document.querySelectorAll(sel+' button').forEach(b=>b.classList.toggle('on',b.dataset[key]===val))}
+/* ---- candles: intraday from the engine (replay path or recorded live prices); 1D from the official daily files ---- */
+let CND=null,CH0=null,HOV=-1,DH={},CHX=null;
+async function loadCandles(){
+  const sym=selSym();if(!sym||CX!=='chart'||!API)return;
+  try{const r=await fetch('api/candles?sym='+encodeURIComponent(sym)+'&tf='+(TF==='D'?60:TF),{cache:'no-store'});if(r.ok){CND=await r.json();CND.want=sym+'|'+TF;drawChart()}}catch(e){}
+  if(TF==='D'&&DH[sym]===undefined){DH[sym]=null;try{const r=await fetch('data/history/'+encodeURIComponent(sym)+'.csv',{cache:'no-store'});if(r.ok){DH[sym]=(await r.text()).split('\n').filter(l=>/^\d{8},/.test(l)).map(l=>{const c=l.split(',');return{t:c[0],o:+c[1],h:+c[2],l:+c[3],c:+c[4],v:+c[5]}})}else DH[sym]=[]}catch(e){DH[sym]=[]}drawChart()}
+}
+function bars(){
+  const sym=selSym();if(!CND||CND.want!==sym+'|'+TF)return[];
+  const b=CND.bars.map(x=>({t:x[0],o:x[1],h:x[2],l:x[3],c:x[4]}));
+  if(TF!=='D')return b;
+  const d=(DH[sym]||[]).filter(x=>x.t!==String(CND.date||'').replace(/-/g,'')).slice(-120);
+  if(b.length)d.push({t:String(CND.date||'').replace(/-/g,''),o:b[0].o,h:Math.max(...b.map(x=>x.h)),l:Math.min(...b.map(x=>x.l)),c:b[b.length-1].c,v:null,today:1});
+  return d;
+}
+function drawChart(){
+  const cv=$('#cnv'),box=$('#cv');if(!cv||CX!=='chart')return;const W=box.clientWidth,Hh=box.clientHeight;if(!W||!Hh)return;
+  const dpr=devicePixelRatio||1;cv.width=W*dpr;cv.height=Hh*dpr;const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,Hh);
+  const st=getComputedStyle(document.body),C=n=>st.getPropertyValue(n).trim(),i=I[S.sel];if(!i)return;
+  const cs=bars(),R=64,B=16,vol=TF==='D'&&cs.some(c=>c.v),VH=vol?Math.round(Hh*0.16):0,ch=Hh-B-VH-4;
+  g.font='10.5px '+C('--mono');g.fillStyle=C('--mute');
+  if(!cs.length){g.fillText('Loading bars…',10,20);return}
+  let hi=Math.max(...cs.map(c=>c.h)),lo=Math.min(...cs.map(c=>c.l));if(hi===lo){hi+=i.t;lo-=i.t}const pd=(hi-lo)*0.06;hi+=pd;lo-=pd;
+  const Y=v=>4+(hi-v)/(hi-lo)*(ch-4),n=cs.length,cw=(W-R-6)/Math.max(n,40),X=k=>4+k*cw+cw/2;
+  g.strokeStyle=C('--line');g.lineWidth=1;
+  for(let k=0;k<=4;k++){const v=lo+(hi-lo)*k/4,y=Math.round(Y(v))+.5;g.beginPath();g.moveTo(4,y);g.lineTo(W-R,y);g.stroke();g.fillText(v.toFixed(2),W-R+4,y+3)}
+  const vmax=vol?Math.max(...cs.map(c=>c.v||0)):0;
+  cs.forEach((c,k)=>{const col=c.c>=c.o?C('--good'):C('--bad'),xx=X(k),bw=Math.max(1,cw*0.7);g.strokeStyle=col;g.fillStyle=col;
+    g.beginPath();g.moveTo(Math.round(xx)+.5,Y(c.h));g.lineTo(Math.round(xx)+.5,Y(c.l));g.stroke();
+    const y1=Y(Math.max(c.o,c.c)),y2=Y(Math.min(c.o,c.c));g.fillRect(xx-bw/2,y1,bw,Math.max(1,y2-y1));
+    if(vol&&c.v){const vh=c.v/vmax*VH;g.globalAlpha=.45;g.fillRect(xx-bw/2,Hh-B-vh,bw,vh);g.globalAlpha=1}});
+  const lp=i.p,ly=Math.round(Y(lp))+.5;g.setLineDash([3,3]);g.strokeStyle=C('--accent');g.beginPath();g.moveTo(4,ly);g.lineTo(W-R,ly);g.stroke();g.setLineDash([]);
+  g.fillStyle=C('--accent');g.fillRect(W-R,ly-8,R,16);g.fillStyle=C('--on-accent');g.fillText(lp.toFixed(2),W-R+4,ly+4);
+  g.fillStyle=C('--mute');const lab=c=>TF==='D'?c.t.slice(6)+'/'+c.t.slice(4,6):mtx(c.t).slice(0,5);
+  const stp=Math.max(1,Math.ceil(n/7),Math.ceil(46/cw));for(let k=0;k<n;k+=stp)g.fillText(lab(cs[k]),Math.max(2,X(k)-14),Hh-4);
+  const dy=i.day;
+  if(HOV>=0&&HOV<n){const c=cs[HOV];g.strokeStyle=C('--mute');g.beginPath();g.moveTo(Math.round(X(HOV))+.5,4);g.lineTo(Math.round(X(HOV))+.5,Hh-B);g.stroke();
+    $('#cDay').textContent=lab(c)+'  O '+c.o.toFixed(2)+'  H '+c.h.toFixed(2)+'  L '+c.l.toFixed(2)+'  C '+c.c.toFixed(2)+(c.v?'  Vol '+c.v.toLocaleString('en-IN'):'')}
+  else $('#cDay').textContent=S.mode==='live'?'Live '+S.mdate+(i.lv?'':' · no live price for this instrument yet (last price held)'):(dy?'Official day '+dy.date+'  O '+dy.o.toFixed(2)+'  H '+dy.h.toFixed(2)+'  L '+dy.l.toFixed(2)+'  C '+dy.c.toFixed(2)+'  prev '+i.pc.toFixed(2):'');
+  CHX={cw,n};
+}
+function renderCX(){
+  const i=I[S.sel];if(!i)return;
+  $('#bookSym').textContent=i.s;$('#cSym').textContent=i.s;const c=i.pc?i.p/i.pc-1:0;
+  $('#cLast').innerHTML='<span class="'+cls(c)+'">'+i.p.toFixed(2)+' ('+pct(c)+')</span>';
+  ['pChart','pBook','pOc'].forEach((id,k)=>$('#'+id).style.display=['chart','book','oc'][k]===CX?'flex':'none');
+  if(CX==='chart'){
+    $('#cNote').textContent=TF==='D'?(i.opt||i.s==='NIFTY-FUT'?'Daily history is kept for NSE shares only: this shows today so far.':'Daily bars: official NSE daily files (up to a year); last bar: today so far.')
+      :S.mode==='live'?'Bars from the live prices recorded since the engine went live today (NSE data refreshes about once a minute).'
+      :i.opt?'Option priced from the NIFTY replay (Black-Scholes at its implied volatility from the official close). Only the official open, high, low and close of NIFTY-FUT are real; the moves between them are simulated.'
+      :'Only the day\'s official open, high, low and close are real; the moves between them are simulated (NSE daily files have no intraday path).';
+    drawChart();
+  } else if(CX==='oc')renderChain();
+}
+function renderChain(){
+  const os=I.filter(i=>i.opt);if(!os.length){$('#oc').innerHTML='';$('#ocNote').textContent='No NIFTY options loaded (data/latest/options.csv is written at the Codespace start).';return}
+  const Sx=S.index||0,ks=[...new Set(os.map(i=>i.opt.k))].sort((a,b)=>a-b),atm=ks.reduce((a,k)=>Math.abs(k-Sx)<Math.abs(a-Sx)?k:a,ks[0]);
+  const cell=(i,side)=>{if(!i)return side==='CE'?'<td></td><td></td><td></td>':'<td></td><td></td><td></td>';const c=i.pc?i.p/i.pc-1:0,itm=side==='CE'?i.opt.k<Sx:i.opt.k>Sx,px='<td class="p'+(itm?' itm':'')+'" data-pk="'+H(i.s)+'" title="Chart and trade '+H(i.s)+'">'+i.p.toFixed(2)+'</td>',ch='<td class="'+cls(c)+'">'+pct(c)+'</td>';return side==='CE'?ch+px:px+ch};
+  $('#oc').innerHTML='<tr><th>CE chg</th><th>CE price</th><th class="k">Strike</th><th>PE price</th><th>PE chg</th></tr>'+ks.map(k=>'<tr class="'+(k===atm?'atm':'')+'">'+cell(os.find(i=>i.opt.k===k&&i.opt.cp==='CE'),'CE')+'<td class="k">'+k+'</td>'+cell(os.find(i=>i.opt.k===k&&i.opt.cp==='PE'),'PE')+'</tr>').join('');
+  $('#ocNote').textContent='NIFTY options, expiry '+os[0].opt.exp+', lot '+os[0].lot+'. NIFTY index '+Sx.toFixed(2)+(S.mode==='live'?' (live)':' (from the NIFTY-FUT replay)')+'. Shaded = in the money; blue line = at the money. Prices: Black-Scholes from the index at each option\'s implied volatility (official close). Buy to open, sell to close; open options are closed at market at 15:20 on expiry day.'+(os[0].opt.x?' THIS EXPIRY HAS PASSED: new orders are refused.':'');
+  if(!OCS){OCS=1;requestAnimationFrame(()=>{const r=$('#oc tr.atm');if(r)$('#ocS').scrollTop=r.offsetTop-$('#ocS').clientHeight/2})}
+}
+$('#cnv').addEventListener('mousemove',e=>{if(!CHX)return;const r=e.target.getBoundingClientRect(),k=Math.floor((e.clientX-r.left-4)/CHX.cw);HOV=k>=0&&k<CHX.n?k:-1;drawChart()});
+$('#cnv').addEventListener('mouseleave',()=>{HOV=-1;drawChart()});
+$('#q').addEventListener('input',search);
+$('#q').addEventListener('keydown',e=>{if(!HITS.length)return;if(e.key==='ArrowDown'||e.key==='ArrowUp'){HI=(HI+(e.key==='ArrowDown'?1:-1)+HITS.length)%HITS.length;[...$('#sr').children].forEach((d,k)=>d.classList.toggle('on',k===HI));e.preventDefault()}else if(e.key==='Enter')pick(HITS[HI]);else if(e.key==='Escape')$('#sr').style.display='none'});
+$('#dsK').onclick=()=>{const L=WLD.live||{};$('#pop').innerHTML='<b>Where prices come from</b><table><tr><th>When</th><th>Shares, ETFs</th><th>NIFTY-FUT, NIFTY options</th></tr>'+
+  '<tr><td>Market hours, 09:15-15:30 IST, Monday-Friday, when NSE\'s live data arrives</td><td>LIVE: NSE cm-market data server (free, no account). Last price about once a minute, delayed 1-3 minutes. The order book stays simulated around it.</td><td>DERIVED from the live NIFTY 50 index: futures = index × (futures / index at the last official close); options by Black-Scholes at their implied volatility.</td></tr>'+
+  '<tr><td>Otherwise (after 15:30, weekends, holidays, feed not available)</td><td colspan="2">REPLAY of the last official NSE trading day from 09:15: official open, high, low and close; the moves between them simulated.</td></tr></table>'+
+  '<p class="mute" style="margin:6px 0 0">Feed now: '+(L.fetched?(L.ok?'OK':'not available')+' · '+H(L.msg||'')+' · fetched '+new Date(L.fetched).toLocaleTimeString('en-GB'):'no live file yet (tools/live_feed.py)')+'</p>';$('#pop').classList.toggle('on')};
+setInterval(()=>{if(CX==='chart')loadCandles()},2000);
+setInterval(loadWL,30000);
+addEventListener('resize',()=>drawChart());
+let mCb=null;
 function modal(t,b,ok,cb){ALLPOS=false;$('#modal .box').classList.remove('wide');$('#mT').textContent=t;$('#mB').innerHTML=b;$('#mOk').textContent=ok;mCb=cb;$('#modal').classList.add('on')}
 function closeM(){$('#modal').classList.remove('on');mCb=null;ALLPOS=false;$('#modal .box').classList.remove('wide')}
 $('#mOk').onclick=()=>{const f=mCb;if(f&&f()===false)return;closeM();render()};
@@ -568,7 +702,7 @@ const pxCell=o=>o.fp>0?o.fp.toFixed(2):o.px>0?o.px.toFixed(2):'-';
 /* quantities: instruments traded in lots (NIFTY-FUT) show lots; units in the tooltip */
 const qN=(q,sym)=>{const l=inst(sym).lot||1;return l>1&&q%l===0?(q/l).toLocaleString('en-IN')+' L':q.toLocaleString('en-IN')};
 const qtyTxt=(q,sym)=>{const l=inst(sym).lot||1;return l>1&&q%l===0?'<span title="'+q.toLocaleString('en-IN')+' units">'+(q/l).toLocaleString('en-IN')+' L</span>':q.toLocaleString('en-IN')};
-function tLabel(){const i=inst($('#tSym').value),l=i.lot||1,t=i.t||0.05;$('#tQtyL').textContent=l>1?'Lots (1 lot = '+l+' units)':'Quantity';$('#tPx').step=t;quoteFill()}
+function tLabel(){const i=inst($('#tSym').value),l=i.lot||1,t=i.t||0.05;$('#tQtyL').textContent=l>1?'Lots (1 lot = '+l+')':'Quantity';$('#tQtyL').title=l>1?'1 lot = '+l+' units':'Shares';$('#tPx').step=t;quoteFill()}
 /* what a market BUY of this size would get from the simulated book right now */
 let qT=null,QT=null;
 function quoteFill(){clearTimeout(qT);qT=setTimeout(async()=>{const s=$('#tSym').value,i=inst(s),l=i.lot||1,n=Math.floor(+$('#tQty').value),f=$('#tFill');
@@ -625,10 +759,13 @@ const hms=w=>new Date(w).toLocaleTimeString('en-GB');
 function applyState(j){
   if(I.length!==j.inst.length||I.some((x,k)=>x.s!==j.inst[k].s)){I.length=0;j.inst.forEach(x=>I.push(Object.assign({},x)));$('#tSym').innerHTML=I.map(i=>'<option>'+H(i.s)+'</option>').join('');if(S.sel>=I.length)S.sel=0;tLabel()}
   else j.inst.forEach((x,k)=>Object.assign(I[k],x));
-  const rp=j.replay||{};RP=rp;
-  $('#wlSrc').textContent=rp.has?(rp.closed?'CLOSED ':'')+new Date(rp.date+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short'}).toUpperCase()+' '+mtx(rp.mt):'NO DAY DATA';
-  $('#wlSrc').className='pill '+(rp.has?(rp.closed?'lock':'sim'):'bad');
-  $('#wlSrc').title=rp.has?'Replay of NSE trading day '+rp.date+'. Open, high, low and close are the official NSE prices; the order of high and low and all moves between them are simulated. Market time 09:15 to 15:30.':'No NSE day data was loaded: prices are placeholders and do not move.';
+  const rp=j.replay||{};RP=rp;S.mode=j.mode||'replay';S.mdate=j.mdate||rp.date;S.index=j.index||0;
+  const dd=x=>new Date(x+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
+  $('#wlSrc').textContent=S.mode==='live'?'LIVE '+mtx(rp.mt):rp.has?(rp.closed?'CLOSED ':'')+dd(rp.date).slice(0,6)+' '+mtx(rp.mt):'NO DAY DATA';
+  $('#wlSrc').className='pill '+(S.mode==='live'?'ok':rp.has?(rp.closed?'lock':'sim'):'bad');
+  $('#dsL').textContent=S.mode==='live'?'Data · live NSE':'Data · last trading day';
+  $('#dsP').textContent=S.mode==='live'?'LIVE '+dd(S.mdate):'REPLAY '+(rp.date?dd(rp.date):'-');$('#dsP').style.color=S.mode==='live'?'var(--good)':'var(--accent)';
+  $('#wlSrc').title=S.mode==='live'?'Live NSE prices (about once a minute, 1-3 minutes delayed). NIFTY-FUT and options are derived from the live NIFTY 50 index.':rp.has?'Replay of NSE trading day '+rp.date+'. Open, high, low and close are the official NSE prices; the order of high and low and all moves between them are simulated. Market time 09:15 to 15:30.':'No NSE day data was loaded: prices are placeholders and do not move.';
   if(document.activeElement!==$('#spd'))$('#spd').value=String(rp.speed);
   S.chg=j.chg||{};
   Object.assign(S,{start:j.start,cash:j.cash,dep:j.dep,real:j.real,fees:j.fees,turn:j.turn,killed:j.killed,halt:j.halt?'Daily loss limit hit':'',lock:j.lock,rate:j.rate,rate_max:j.rate_max,queued:j.queued,book:j.book,day_start:j.day_start,strats:j.strats||[],strat_cap:j.strat_cap||0.015,evseq:j.evseq||0});
@@ -680,15 +817,23 @@ async function poll(){
 async function initApi(){
   try{const r=await fetch('api/state',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(j.engine!=='cpp')return;
     API=true;applyState(j);
-    render();setInterval(poll,500);pollAgent();setInterval(()=>{if(location.hash==='#engine'||Date.now()%3000<1000)pollAgent()},1000);tLabel()}catch(e){render()}
+    render();loadWL();loadUni();loadCandles();setInterval(poll,500);pollAgent();setInterval(()=>{if(location.hash==='#engine'||Date.now()%3000<1000)pollAgent()},1000);tLabel()}catch(e){render()}
 }
 document.addEventListener('click',e=>{
+  if(!e.target.closest('#pop')&&!e.target.closest('#dsK'))$('#pop').classList.remove('on');
+  if(!e.target.closest('.srch'))$('#sr').style.display='none';
+  {const t=e.target,rm=t.closest('[data-rm]');if(rm){e.stopPropagation();post('unwatch',{sym:rm.dataset.rm}).then(loadWL);return}
+   const h=t.closest('[data-h]');if(h){pick(h.dataset.h);return}
+   const w=t.closest('[data-w]');if(w){WL=w.dataset.w;tabs('#wlT','w',WL);render();return}
+   const c=t.closest('[data-c]');if(c){CX=c.dataset.c;OCS=0;tabs('#cxT','c',CX);render();loadCandles();return}
+   const f=t.closest('[data-tf]');if(f){TF=f.dataset.tf;tabs('#tf','tf',TF);CND=null;HOV=-1;render();loadCandles();return}
+   const pk=t.closest('[data-pk]');if(pk){selectSym(pk.dataset.pk);CX='chart';tabs('#cxT','c','chart');render();loadCandles();return}}
   if(e.target.id==='ckAll'){(S.lots||[]).forEach(l=>{if(!l.c){if(e.target.checked)SELL.add(l.id);else SELL.delete(l.id)}});render();return}
   const t=e.target.closest('[data-agm],[data-act],[data-sel],[data-cx],[data-close],[data-exits],[data-ck],[data-amt],[data-node],[data-open],[data-flt]');if(!t)return;
   const d=t.dataset;
   if(d.agm)setAgent(d.agm);
   else if(d.act)ACT[d.act]();
-  else if(d.sel){S.sel=+d.sel;$('#tSym').value=I[S.sel].s;tLabel();render();if(API)poll()}
+  else if(d.sel){S.sel=+d.sel;$('#tSym').value=I[S.sel].s;tLabel();CND=null;HOV=-1;render();if(API)poll();loadCandles()}
   else if(d.cx&&API){post('cancel',{id:d.cx}).then(poll)}
   else if(d.close&&API){post('close',{ids:d.close}).then(poll)}
   else if(d.exits&&API){const l=(S.lots||[]).find(x=>x.id===d.exits);if(!l)return;const i=inst(l.s),hs=l.e*(1-L.stop);

@@ -13,6 +13,7 @@
 // Exits (close lot, flatten, kill, 2% stop) and cancels wait in a queue for a token instead of being dropped.
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <deque>
 #include <map>
@@ -32,6 +33,9 @@
 namespace mc {
 
 class LiveSim {
+ private:
+  struct Inst;
+
  public:
   static constexpr int kSession = 22500;   // 09:15 to 15:30 IST, in seconds
   static constexpr int kRes = 4;           // replay path points per market second
@@ -109,7 +113,7 @@ class LiveSim {
       // equity bought on an earlier day and still held becomes delivery: buy-side STT and the stamp-duty difference
       int carried = 0;
       for (Lot& l : lots_) {
-        if (l.qty <= 0 || l.dlv || l.day == day || inst_[l.inst].seg == Seg::IndexFuture) continue;
+        if (l.qty <= 0 || l.dlv || l.day == day || inst_[l.inst].seg == Seg::IndexFuture || inst_[l.inst].seg == Seg::IndexOption) continue;
         const double v = l.entry * static_cast<double>(l.qty);
         Charges c;
         c.stt = inst_[l.inst].seg == Seg::Stock ? v * rates_.stt_deliv : 0.0;
@@ -125,6 +129,115 @@ class LiveSim {
     day_ = day;
   }
   void set_price(std::size_t i, Price px) { inst_[i].px = px; marks_[i] = px; }   // test hook
+
+  // ---- NIFTY index options ----
+  // The index is not traded: during the replay it is the NIFTY futures replay x (index close / futures close) of the
+  // official day; with live data it is NSE's live NIFTY 50 value. Each option is priced from it with Black-Scholes
+  // (rate 0) at its own implied volatility, solved from its official close (server). Price = whole ticks, at least one.
+  void set_index_link(std::size_t fut, double ratio) { fut_i_ = fut; idx_ratio_ = ratio; }
+  // exp = expiry date YYYY-MM-DD (contracts expire at 15:30 IST that day)
+  void set_option(std::size_t i, double strike, bool call, const std::string& exp, double iv) {
+    Inst& in = inst_[i]; in.seg = Seg::IndexOption; in.opt = true; in.k = strike; in.call = call; in.exp = exp; in.iv = iv;
+    in.exp_day = civil_day(exp);
+  }
+  static double ncdf(double z) { return 0.5 * std::erfc(-z / std::sqrt(2.0)); }
+  static double bs(double S, double K, double T, double v, bool call) {
+    if (T <= 0 || v <= 0) return std::max(0.0, call ? S - K : K - S);
+    const double sd = v * std::sqrt(T), d1 = (std::log(S / K) + sd * sd / 2) / sd, d2 = d1 - sd;
+    return call ? S * ncdf(d1) - K * ncdf(d2) : K * ncdf(-d2) - S * ncdf(-d1);
+  }
+  // Implied volatility for `price`; 0 when the price is outside what the model can give (below intrinsic value).
+  static double implied_vol(double price, double S, double K, double T, bool call) {
+    if (!(price > bs(S, K, T, 1e-4, call)) || !(price < bs(S, K, T, 5.0, call))) return 0;
+    double a = 1e-4, b = 5.0;
+    for (int k = 0; k < 200; ++k) { const double m = (a + b) / 2; if (bs(S, K, T, m, call) > price) b = m; else a = m; }
+    return (a + b) / 2;
+  }
+  // Days since 1970-01-01 for a YYYY-MM-DD date (civil calendar).
+  static std::int64_t civil_day(const std::string& d) {
+    if (d.size() < 10) return 0;
+    int y = std::atoi(d.substr(0, 4).c_str()); const int m = std::atoi(d.substr(5, 2).c_str()), dd = std::atoi(d.substr(8, 2).c_str());
+    y -= m <= 2;
+    const int era = (y >= 0 ? y : y - 399) / 400; const int yoe = y - era * 400;
+    const int doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + dd - 1; const int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return static_cast<std::int64_t>(era) * 146097 + doe - 719468;
+  }
+  // The NIFTY index value now (0 if unknown).
+  double index_now() const {
+    if (live_mode_ && idx_live_ > 0) return idx_live_;
+    return fut_i_ < inst_.size() && idx_ratio_ > 0 ? rupees(inst_[fut_i_].px) * idx_ratio_ : 0.0;
+  }
+  // Years to expiry at market second `mt` of the data day (replay day, or today when live).
+  double years_to_expiry(const Inst& in, double mt) const {
+    const std::int64_t d = civil_day(data_date());
+    if (!d || !in.exp_day) return 0;
+    const double now_s = static_cast<double>(d) * 86400.0 + 33300.0 + mt, exp_s = static_cast<double>(in.exp_day) * 86400.0 + 55800.0;
+    return std::max(0.0, (exp_s - now_s) / (365.0 * 86400.0));
+  }
+  Price option_price(const Inst& in, double S, double mt) const {
+    const double v = bs(S, in.k, years_to_expiry(in, mt), in.iv, in.call);
+    return std::max<Price>(in.tick, static_cast<Price>(std::llround(v * 100.0 / static_cast<double>(in.tick))) * in.tick);
+  }
+  bool option_expired(const Inst& in) const { return in.opt && civil_day(data_date()) > in.exp_day; }
+
+  // ---- live data (market hours) ----
+  // The server calls set_live every loop: on = NSE's live prices are fresh and the market is open. While live,
+  // instruments with a live price trade at it, NIFTY-FUT follows the live NIFTY 50 value x (futures/index of the last
+  // official close) and the options are priced from the live index. Off: the replay of the last official day.
+  void set_live(bool on, const std::string& date, double mt) {
+    if (on && !live_mode_) {
+      live_mode_ = true; live_date_ = date; closed_ = false;
+      for (Inst& in : inst_) { in.samples.clear(); if (in.has_day) in.prev = in.day.c; }
+      log("LIVE DATA", "Market open: prices from NSE live data (stocks, NIFTY 50 index; refreshed about once a minute, 1-3 minutes delayed). NIFTY-FUT and options are derived from the live index.");
+    } else if (!on && live_mode_) {
+      live_mode_ = false; mt_ = 0; closed_ = false;
+      for (std::size_t i = 0; i < inst_.size(); ++i) {
+        Inst& in = inst_[i]; in.samples.clear(); in.live_px = 0;
+        if (in.has_day) { in.prev = in.day.pc > 0 ? in.day.pc : in.day.o; in.px = in.opt ? option_price(in, index_now(), 0) : in.path[0]; marks_[i] = in.px; quote(i); }
+      }
+      log("REPLAY", "No live data (market closed or the feed stopped): replay of the last official NSE day " + replay_date_ + " from 09:15. Prices jump to that day's levels.");
+    }
+    if (on) { live_mt_ = std::clamp(mt, 0.0, static_cast<double>(kSession)); live_date_ = date; }
+  }
+  void set_live_quote(std::size_t i, Price px, Price prev = 0) {
+    if (i >= inst_.size() || px <= 0) return;
+    Inst& in = inst_[i];
+    in.live_px = std::max<Price>(in.tick, static_cast<Price>(std::llround(static_cast<double>(px) / static_cast<double>(in.tick))) * in.tick);
+    if (prev > 0) in.prev = prev;
+  }
+  void set_live_index(double v) { if (v > 0) idx_live_ = v; }
+  bool live() const { return live_mode_; }
+  const std::string& data_date() const { return live_mode_ ? live_date_ : replay_date_; }
+
+  // Candles of one instrument for this session: tf seconds per bar, up to the last 400 bars. Replay: built from the
+  // replay path (official open/high/low/close, simulated moves between them). Live: from the prices recorded each second.
+  std::string candles_json(std::size_t i, int tf) const {
+    std::ostringstream o; o.precision(15);
+    if (i >= inst_.size() || tf <= 0) return "{\"bars\":[]}";
+    const Inst& in = inst_[i];
+    std::vector<std::array<double, 5>> bars;
+    auto add = [&](double t, double p) {
+      const double b = std::floor(t / tf) * tf;
+      if (bars.empty() || bars.back()[0] != b) bars.push_back({b, p, p, p, p});
+      else { auto& x = bars.back(); x[2] = std::max(x[2], p); x[3] = std::min(x[3], p); x[4] = p; }
+    };
+    if (live_mode_ || !in.has_day) { for (const auto& [t, p] : in.samples) add(t, p); }
+    else {
+      const std::size_t m = static_cast<std::size_t>(mt_);
+      for (std::size_t sec = 0; sec <= m; ++sec) {
+        const double p = in.opt ? rupees(option_price(in, rupees(inst_[fut_i_].path[std::min(inst_[fut_i_].path.size() - 1, sec * kRes)]) * idx_ratio_, static_cast<double>(sec)))
+                                : rupees(in.path[std::min(in.path.size() - 1, sec * kRes)]);
+        add(static_cast<double>(sec), p);
+      }
+    }
+    const std::size_t from = bars.size() > 400 ? bars.size() - 400 : 0;
+    o << "{\"sym\":\"" << esc(in.sym) << "\",\"tf\":" << tf << ",\"mode\":\"" << (live_mode_ ? "live" : "replay") << "\",\"date\":\"" << esc(data_date()) << "\",\"bars\":[";
+    for (std::size_t k = from; k < bars.size(); ++k) o << (k > from ? "," : "") << "[" << bars[k][0] << "," << bars[k][1] << "," << bars[k][2] << "," << bars[k][3] << "," << bars[k][4] << "]";
+    o << "]}";
+    return o.str();
+  }
+  // The stub trades only the first n instruments (the original watchlist), as before more instruments were added.
+  void set_stub_universe(std::size_t n) { stub_n_ = n; }
 
   // Replay speed: 0 = paused, 1 = real time (6h15m), 6.25 = 60 minutes, 25 = 15 minutes.
   bool set_speed(double s) {
@@ -220,6 +333,7 @@ class LiveSim {
     else if (r.tp > 100) { why = "Take profit can be at most 100%"; r.code = "BAD_EXIT"; }
     else if (qty <= 0 || qty % in.lot != 0) { why = "Quantity must be whole lots of " + std::to_string(in.lot); r.code = "LOT_SIZE"; }
     else if (type == OrdType::Limit && (px <= 0 || px % in.tick != 0)) why = "Limit price must be a positive multiple of the tick size";
+    else if (option_expired(in)) { why = "This option contract has expired (" + in.exp + ")"; r.code = "EXPIRED"; }
     else if (risk_.killed()) { why = human(Reject::Killed); r.code = to_string(Reject::Killed); }
     else if (closed_) { why = "Market closed: the replay of " + replay_date_ + " ended at 15:30. Restart the replay."; r.code = "MARKET_CLOSED"; }
     else if (!q_.empty() || !later_.empty()) { why = "Exits and cancels are being sent (8 per second). Try again in a moment."; r.code = "QUEUE_BUSY"; }
@@ -377,15 +491,35 @@ class LiveSim {
     ++ticks_;
     const double dt = stepped_ ? static_cast<double>(now - last_step_) * 1e-9 : 0.0;   // the first step only starts the clock
     last_step_ = now; stepped_ = true;
-    if (move && has_replay_ && !closed_ && speed_ > 0) {
+    if (move && live_mode_) {
+      mt_ = live_mt_;
+      for (std::size_t i = 0; i < inst_.size(); ++i) {
+        Inst& in = inst_[i];
+        if (in.opt) continue;
+        if (i == fut_i_ && idx_live_ > 0 && idx_ratio_ > 0) {
+          in.px = std::max<Price>(in.tick, static_cast<Price>(std::llround(idx_live_ / idx_ratio_ * 100.0 / static_cast<double>(in.tick))) * in.tick);
+        } else if (in.live_px > 0) in.px = in.live_px;   // no live price yet: holds its last price
+      }
+    } else if (move && has_replay_ && !closed_ && speed_ > 0) {
       mt_ = std::min<double>(kSession, mt_ + dt * speed_);
-      for (auto& in : inst_) if (in.has_day) in.px = path_at(in, mt_);
+      for (auto& in : inst_) if (in.has_day && !in.opt) in.px = path_at(in, mt_);
       if (mt_ >= kSession) {
         closed_ = true; stub_ = false;
         log("SESSION CLOSE", "Replay of " + replay_date_ + " reached 15:30: prices hold at the official close. New orders are closed; exits still work.");
       }
     }
+    if (move) { const double S = index_now(); if (S > 0) for (Inst& in : inst_) if (in.opt) in.px = option_price(in, S, mt_); }
     for (std::size_t i = 0; i < inst_.size(); ++i) { marks_[i] = inst_[i].px; quote(i); }
+    if (live_mode_ && (inst_.empty() || inst_[0].samples.empty() || inst_[0].samples.back().first + 1 <= static_cast<float>(mt_)))
+      for (Inst& in : inst_) { in.samples.emplace_back(static_cast<float>(mt_), static_cast<float>(rupees(in.px))); if (in.samples.size() > 30000) in.samples.erase(in.samples.begin(), in.samples.begin() + 5000); }
+    // options are closed at market from 15:20 on their expiry day (no exercise in the simulation)
+    if (mt_ >= kSession - 600) {
+      const std::int64_t today = civil_day(data_date());
+      for (const Lot& l : lots_) if (l.qty > 0 && !l.closing && inst_[l.inst].opt && inst_[l.inst].exp_day <= today) {
+        log("EXPIRY", inst_[l.inst].sym + " expires today: position " + tag(l.id) + " closed at market (15:20)");
+        queue_close(l.id, "EXPIRY");
+      }
+    }
     for (Act& a : later_) q_.push_back(a);   // exits that waited for fresh depth
     later_.clear();
     for (const Lot& l : lots_) {              // exits per position lot: hard 2% stop, then the owner's stop loss / take profit
@@ -413,7 +547,7 @@ class LiveSim {
     pump(now);
     if (stub_ && !closed_ && now >= next_stub_ && !inst_.empty()) {
       next_stub_ = now + 4000000000LL;
-      const std::size_t i = rng_.next() % inst_.size();
+      const std::size_t i = rng_.next() % std::min(inst_.size(), stub_n_ ? stub_n_ : inst_.size());
       OrderId own = 0;   // the stub sells only a position it opened itself, never the owner's or G.R.I.T's
       for (const Lot& l : lots_) if (l.qty > 0 && !l.closing && l.inst == i && orders_[l.id - 1].src == "AI-STUB") { own = l.id; break; }
       if (own && (rng_.next() & 1)) {
@@ -475,7 +609,13 @@ class LiveSim {
       auto L = [](const std::string& x) { return static_cast<long long>(std::stoll(x)); };
       auto S = [](const std::string& x) { return x == "-" ? std::string() : x; };
       // instruments first (missing ones are re-created at their saved price)
-      for (const auto& f : rows) if (f[0] == "I" && f.size() >= 6 && find_symbol(f[1]) < 0) {
+      // only instruments the saved orders, lots or positions refer to (not every contract ever listed)
+      std::map<std::string, bool> used;
+      for (const auto& f : rows) {
+        if ((f[0] == "O" || f[0] == "L") && f.size() >= 3) used[f[2]] = true;
+        if (f[0] == "P" && f.size() >= 2) used[f[1]] = true;
+      }
+      for (const auto& f : rows) if (f[0] == "I" && f.size() >= 6 && find_symbol(f[1]) < 0 && used.count(f[1])) {
         add_instrument(f[1], f[2], L(f[3]), L(f[4]), "saved price (not in today's data)", L(f[5]));
       }
       auto idx = [&](const std::string& sym) -> std::uint32_t {
@@ -564,12 +704,14 @@ class LiveSim {
       << ",\"evseq\":" << ev_seq_ << ",\"strat_cap\":" << lim_.strat_daily_loss << ",\"stop_pct\":" << lim_.stop_pct
       << ",\"chg\":{\"stt\":" << chg_.stt << ",\"txn\":" << chg_.txn << ",\"sebi\":" << chg_.sebi << ",\"stamp\":" << chg_.stamp << ",\"gst\":" << chg_.gst << ",\"brk\":" << chg_.brokerage << "}"
       << ",\"replay\":{\"has\":" << b(has_replay_) << ",\"date\":\"" << esc(replay_date_) << "\",\"mt\":" << mt_ << ",\"len\":" << kSession
-      << ",\"speed\":" << speed_ << ",\"closed\":" << b(closed_) << "},\"inst\":[";
+      << ",\"speed\":" << speed_ << ",\"closed\":" << b(closed_) << "},\"mode\":\"" << (live_mode_ ? "live" : "replay") << "\",\"mdate\":\"" << esc(data_date())
+      << "\",\"index\":" << index_now() << ",\"inst\":[";
     for (std::size_t i = 0; i < inst_.size(); ++i) {
       const Inst& in = inst_[i];
       o << (i ? "," : "") << "{\"s\":\"" << esc(in.sym) << "\",\"v\":\"" << esc(in.venue) << "\",\"p\":" << rupees(in.px)
         << ",\"pc\":" << rupees(in.prev) << ",\"t\":" << rupees(in.tick) << ",\"lot\":" << in.lot << ",\"src\":\"" << esc(in.source) << "\",\"seg\":\"" << to_string(in.seg)
-        << "\",\"br\":" << buy_rate(i);
+        << "\",\"br\":" << buy_rate(i) << ",\"lv\":" << b(live_mode_ && (in.live_px > 0 || in.opt || (i == fut_i_ && idx_live_ > 0)));
+      if (in.opt) o << ",\"opt\":{\"k\":" << in.k << ",\"cp\":\"" << (in.call ? "CE" : "PE") << "\",\"exp\":\"" << esc(in.exp) << "\",\"iv\":" << in.iv << ",\"x\":" << b(option_expired(in)) << "}";
       if (in.has_day)
         o << ",\"day\":{\"date\":\"" << esc(in.day.date) << "\",\"o\":" << rupees(in.day.o) << ",\"h\":" << rupees(in.day.h) << ",\"l\":" << rupees(in.day.l)
           << ",\"c\":" << rupees(in.day.c) << ",\"vol\":" << in.day.vol_units << ",\"vnote\":\"" << esc(in.day.vol_note) << "\"}";
@@ -651,6 +793,9 @@ class LiveSim {
   struct Inst {
     std::string sym, venue; Price px = 0, start = 0, prev = 0, tick = 1; OrderBook book{256}; std::string source; Qty lot = 1; Seg seg = Seg::Stock;
     bool has_day = false; Day day; std::vector<Price> path; Qty level_qty = 0; std::string depth_note;
+    Price live_px = 0;                                     // last live price (market hours)
+    bool opt = false, call = true; double k = 0, iv = 0; std::string exp; std::int64_t exp_day = 0;   // index option
+    std::vector<std::pair<float, float>> samples;         // live mode: (market second, price) once a second, for candles
   };
   struct Act { bool close = false; OrderId id = 0; std::string src; };
   struct St { double real = 0, fees = 0; bool halted = false; };   // one strategy (order source), today
@@ -901,7 +1046,7 @@ class LiveSim {
         qa = (1 + static_cast<Qty>(rng_.next() % 40)) * in.lot; qb = (1 + static_cast<Qty>(rng_.next() % 40)) * in.lot;
       }
       in.book.add_limit(b0 + static_cast<OrderId>(2 * k), Side::Sell, in.px + in.tick * (k + 1), qa, cb);
-      const Price bp = in.px - in.tick * (k + 1);
+      const Price bp = std::max<Price>(in.tick, in.px - in.tick * (k + 1));   // never below one tick (an option at 0.05 still has bids)
       if (bp > 0) in.book.add_limit(b0 + static_cast<OrderId>(2 * k + 1), Side::Buy, bp, qb, cb);
     }
   }
@@ -1037,6 +1182,8 @@ class LiveSim {
   std::string replay_date_;
   std::map<std::string, St> strat_;
   long ev_seq_ = 0;
+  bool live_mode_ = false; std::string live_date_; double live_mt_ = 0, idx_live_ = 0, idx_ratio_ = 0;
+  std::size_t fut_i_ = static_cast<std::size_t>(-1), stub_n_ = 0;
 };
 
 }  // namespace mc
