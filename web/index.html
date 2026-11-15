@@ -36,21 +36,24 @@ nav a.on{color:var(--text);border-bottom-color:var(--accent);font-weight:500}
 main{flex:1;min-height:0;padding:6px 16px}
 .view{display:none;height:100%}
 .view.on{display:grid;gap:6px;grid-template-columns:repeat(12,minmax(0,1fr));grid-auto-rows:minmax(0,1fr)}
-#v-terminal.on,#v-risk.on{grid-template-rows:auto minmax(0,1fr)}
-#v-terminal.on{grid-template-columns:repeat(24,minmax(0,1fr))}
+#v-risk.on{grid-template-rows:auto minmax(0,1fr)}
+/* terminal: the order blotter / positions row has a fixed height (same with media open or hidden); the top row takes the rest */
+#v-terminal.on{grid-template-rows:minmax(0,1fr) var(--lowH,42%)}
+.tt .fix{overflow-y:auto}
+#v-terminal.on{grid-template-columns:repeat(48,minmax(0,1fr))}
 #v-connector.on{display:flex;gap:0}
 #cL{flex:0 0 calc(var(--split,58%) - 5px)}#cR{flex:1}
 .split{flex:none;width:10px;cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none}
 .split::after{content:"";width:3px;height:56px;border-radius:2px;background:var(--mute)}
 .split:hover::after,.split:focus-visible::after{background:var(--accent)}
 #v-account.on{grid-template-rows:minmax(0,1fr) minmax(0,1.15fr)}
-.side{grid-column:16 / span 9;grid-row:1 / span 2;display:flex;min-width:0;min-height:0}
-/* terminal columns: with the media panel open (it takes columns 16-24) and with it hidden */
-.tw{grid-column:span 6}.tb{grid-column:span 4}.tt{grid-column:span 5}.tbl{grid-column:span 6}.tp{grid-column:span 9}
-#v-terminal.nomedia:not(.alerts) .tw{grid-column:span 7}#v-terminal.nomedia:not(.alerts) .tb{grid-column:span 5}#v-terminal.nomedia:not(.alerts) .tt{grid-column:span 12}
-#v-terminal.nomedia:not(.alerts) .tbl{grid-column:span 11}#v-terminal.nomedia:not(.alerts) .tp{grid-column:span 13}
+.side{grid-column:33 / span 16;grid-row:1 / span 2;display:flex;min-width:0;min-height:0}
+/* terminal columns (48-column grid): with the media panel open (it takes columns 33-48) and with it hidden */
+.tw{grid-column:span 12}.tb{grid-column:span 8}.tt{grid-column:span 12}.tbl{grid-column:span 13}.tp{grid-column:span 19}
+#v-terminal.nomedia:not(.alerts) .tw{grid-column:span 14}#v-terminal.nomedia:not(.alerts) .tb{grid-column:span 10}#v-terminal.nomedia:not(.alerts) .tt{grid-column:span 24}
+#v-terminal.nomedia:not(.alerts) .tbl{grid-column:span 22}#v-terminal.nomedia:not(.alerts) .tp{grid-column:span 26}
 /* alerts panel: takes the media column when opened; the media panel is then hidden (TV keeps playing) */
-#alertSide{grid-column:16 / span 9;grid-row:1 / span 2;display:none;min-width:0;min-height:0}
+#alertSide{grid-column:33 / span 16;grid-row:1 / span 2;display:none;min-width:0;min-height:0}
 #v-terminal.alerts #alertSide{display:flex}#alertSide>.panel{flex:1}
 #alertList{font-family:var(--sans);font-size:14px}
 #alertList td{white-space:normal;vertical-align:top;padding:5px 8px;line-height:1.4}
@@ -60,8 +63,19 @@ main{flex:1;min-height:0;padding:6px 16px}
 @keyframes blink{50%{background:var(--bad);color:#fff}}
 .blink{animation:blink 1s steps(1) infinite}
 tr.new td{background:var(--sell)}
-#blotter td,#blotter th,#pos td,#pos th{padding:2px 4px}#blotter,#pos{font-size:12px}
-.pfoot{flex:none;border-top:1px solid var(--line);padding:2px 8px;font-family:var(--mono);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+/* blotter and positions: no scrolling; rows have a fixed height, only the rows that fit are drawn, columns fit the panel width */
+.fit{flex:1;min-height:0;overflow:hidden}
+#blotter,#pos,#posAll{table-layout:fixed;width:100%;font-size:11px}
+#blotter th,#pos th,#posAll th{font-size:10.5px}
+#blotter td,#blotter th,#pos td,#pos th,#posAll td,#posAll th{padding:0 2px;height:21px;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#blotter .btn.sm,#pos .btn.sm,#posAll .btn.sm{padding:0 5px;line-height:15px;font-size:11px}
+#blotter .pill,#pos .pill,#posAll .pill{line-height:15px;padding:0 4px}
+#blotter tr.more td,#pos tr.more td{text-align:left;color:var(--mute)}
+/* fixed column widths sized for the narrowest case (media open); State and Unrealized take the remaining width */
+#blotter .k1{width:78px}#blotter .k2{width:92px}#blotter .k3{width:32px}#blotter .k4{width:52px}#blotter .k5{width:64px}#blotter .k6{width:58px}
+:is(#pos,#posAll) .k0{width:20px}:is(#pos,#posAll) .k1{width:78px}:is(#pos,#posAll) .k2{width:92px}:is(#pos,#posAll) .k3{width:64px}:is(#pos,#posAll) .k4{width:52px}:is(#pos,#posAll) .k5{width:58px}:is(#pos,#posAll) .k6{width:58px}:is(#pos,#posAll) .k7{width:38px}:is(#pos,#posAll) .k8{width:38px}:is(#pos,#posAll) .k10{width:54px}
+#modal .box.wide{max-width:980px}#modal .box.wide #mB{max-height:70vh;overflow:auto}
+.pfoot{flex:none;border-top:1px solid var(--line);padding:2px 8px;font-family:var(--mono);font-size:11.5px;line-height:1.35;display:flex;gap:1px 12px;flex-wrap:wrap}
 .g4{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:5px}
 /* hidden media keeps running (TV sound keeps playing): moved off screen, not removed */
 #v-terminal.nomedia .side{position:fixed;left:-10000px;top:0;width:640px;height:480px}
@@ -191,8 +205,8 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
       <label class="f" for="tType">Type<select id="tType"><option>MARKET</option><option>LIMIT</option></select></label>
       <label class="f" for="tQty"><span id="tQtyL">Quantity</span><input id="tQty" type="number" min="1" value="1"></label>
       <label class="f" for="tPx">Limit price<input id="tPx" type="number" step="0.05" placeholder="market"></label>
-      <label class="f" for="tSl" title="BUY only. % below the entry price; the position closes at market when the last price falls there. At most 2% (the engine's hard stop).">Stop loss % (optional, max 2)<input id="tSl" type="number" step="0.1" min="0" max="2" placeholder="none"></label>
-      <label class="f" for="tTp" title="BUY only. % above the entry price; the position closes at market when the last price rises there.">Take profit % (optional)<input id="tTp" type="number" step="0.1" min="0" placeholder="none"></label>
+      <label class="f" for="tSl" title="BUY only. % below the entry price; the position closes at market when the last price falls there. At most 2% (the engine's hard stop).">Stop loss % (max 2)<input id="tSl" type="number" step="0.1" min="0" max="2" placeholder="none"></label>
+      <label class="f" for="tTp" title="BUY only. % above the entry price; the position closes at market when the last price rises there.">Take profit %<input id="tTp" type="number" step="0.1" min="0" placeholder="none"></label>
       <button class="btn buy" data-act="buy">BUY</button><button class="btn sell" data-act="sell">SELL</button>
     </div>
     <p class="note" id="tFill"></p>
@@ -211,8 +225,8 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
     </div>
   </div>
   <div id="alertSide"><div class="panel"><h2>Alerts <span class="row" style="gap:4px;align-items:center"><span class="mono" id="alN"></span><button class="btn sm" data-act="alerts" title="Close the alerts">Close ▸</button></span></h2><div class="scroll"><table id="alertList"></table></div></div></div>
-  <div class="panel tbl"><h2>Order blotter <button class="btn sm" data-act="cancelAll">Cancel all</button></h2><div class="scroll"><table id="blotter"></table></div></div>
-  <div class="panel tp"><h2>Positions <span class="mono" id="posN"></span> <span class="row" style="gap:4px"><button class="btn sm" data-act="closeSel" id="closeSel">Close selected</button><button class="btn sm" data-act="flatten">Flatten all</button></span></h2><div class="scroll"><table id="pos"></table></div><div class="pfoot" id="pFoot"></div></div>
+  <div class="panel tbl"><h2>Order blotter <button class="btn sm" data-act="cancelAll">Cancel all</button></h2><div class="fit" id="blotFit"><table id="blotter"></table></div></div>
+  <div class="panel tp"><h2>Positions <span class="mono" id="posN"></span> <span class="row" style="gap:4px"><button class="btn sm" data-act="closeSel" id="closeSel">Close selected</button><button class="btn sm" data-act="flatten">Flatten all</button></span></h2><div class="fit" id="posFit"><table id="pos"></table></div><div class="pfoot" id="pFoot"></div></div>
 </section>
 
 <section class="view" id="v-connector">
@@ -375,12 +389,23 @@ function render(){
   if(!NEWS)setTape(HEAD.map(h=>'<span>SAMPLE · <b class="mute">'+h[0]+'</b> · '+h[2]+'</span>').join(''));
   const qq=(a,b,s)=>{const l=inst(s).lot||1;return l>1?(a/l).toLocaleString('en-IN')+'/'+(b/l).toLocaleString('en-IN')+' L':a.toLocaleString('en-IN')+'/'+b.toLocaleString('en-IN')};
   const stx=o=>o.split&&isOpen(o)?'SPLIT '+qq(o.f,o.q,o.s):o.split&&o.st==='CANCELLED'?'SPLIT '+qq(o.f,o.q,o.s)+' · stopped':o.st==='FILLED'?'FILLED':o.st==='REJECTED_RISK'?'VETO':o.st==='ACKED'?'OPEN':o.st==='PARTIALLY_FILLED'?'PART '+qN(o.f,o.s)+' of '+qN(o.q,o.s):o.st==='CANCELLED'?(o.f>0?qN(o.f,o.s)+' filled · rest CXL':'CXL'):o.st;
-  $('#blotter').innerHTML='<tr><th>Order</th><th class="tc">Time</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,40).map(o=>'<tr title="'+H(tip(o.ns,o.mt)+' · '+o.src+(o.lot?' · closes lot '+o.lot:'')+(o.why?' · '+o.why:''))+'"><td>#'+o.id.slice(4)+(o.split?' <span class="mute">split</span>':'')+(o.src==='AI-STUB'?' <span class="mute">stub</span>':o.src!=='MANUAL'?' <span class="mute">'+H(o.src.toLowerCase())+'</span>':'')+'</td><td class="mute tc">'+tms(o.ns)+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+qtyTxt(o.q,o.s)+'</td><td>'+H(o.s)+'</td><td>'+pxCell(o)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+o.st+'">'+stx(o)+'</span></td></tr>'+(o.st==='REJECTED_RISK'&&o===S.orders[0]?'<tr><td colspan="7" class="w dn" style="font-size:11px">'+H(o.why)+(FUNDABLE.includes(o.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':'')+'</td></tr>':'')).join('')||'<tr><td colspan="7" class="mute w">No simulated orders yet.</td></tr>');
+  /* blotter: newest first; only the rows that fit the fixed panel are drawn (no scrolling); the full list is on the Account page */
+  /* Time columns only when the terminal is wide (media and alerts closed); not drawn at all otherwise, so they take no width */
+  const TW=$('#v-terminal').classList.contains('nomedia')&&!$('#v-terminal').classList.contains('alerts');
+  const RH=21,capR=id=>Math.max(1,Math.floor(document.getElementById(id).clientHeight/RH)-1);
+  const bR=[].concat(...S.orders.map(o=>{const h='<tr title="'+H(tip(o.ns,o.mt)+' · '+o.src+(o.lot?' · closes lot '+o.lot:'')+(o.why?' · '+o.why:''))+'"><td>#'+o.id.slice(4)+(o.split?' <span class="mute">split</span>':'')+(o.src==='AI-STUB'?' <span class="mute">stub</span>':o.src!=='MANUAL'?' <span class="mute">'+H(o.src.toLowerCase())+'</span>':'')+'</td>'+(TW?'<td class="mute">'+tms(o.ns)+'</td>':'')+'<td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+qtyTxt(o.q,o.s)+'</td><td>'+H(o.s)+'</td><td>'+pxCell(o)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+H(stx(o))+'">'+(!TW&&o.split&&isOpen(o)?Math.floor(o.f/o.q*100)+'%':stx(o))+'</span></td></tr>',r=(o.st==='REJECTED_RISK'&&o===S.orders[0]?'<tr><td colspan="'+(TW?7:6)+'" class="dn" title="'+H(o.why)+'">'+H(o.why)+(FUNDABLE.includes(o.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':'')+'</td></tr>':'');return r?[h,r]:[h]})),bC=capR('blotFit');let bH=bR.join(''),bMore=0;
+  if(bR.length>bC){const keep=bR.slice(0,bC-1);bH=keep.join('');bMore=S.orders.length-keep.filter(x=>x.indexOf('<tr title=')===0).length}
+  $('#blotter').innerHTML='<tr><th class="k1">Order</th>'+(TW?'<th class="k2">Time</th>':'')+'<th class="k3">Side</th><th class="k4">Qty</th><th class="k5">Instrument</th><th class="k6">Price</th><th class="k7">State</th></tr>'+(bH?bH+(bMore?'<tr class="more"><td colspan="'+(TW?7:6)+'">+'+bMore+' older order'+(bMore>1?'s':'')+' · full list on the <a href="#account">Account</a> page</td></tr>':''):'<tr><td colspan="'+(TW?7:6)+'" class="mute">No simulated orders yet.</td></tr>');
   const lots=S.lots||[];[...SELL].forEach(id=>{if(!lots.some(l=>l.id===id&&!l.c))SELL.delete(id)});
   $('#posN').textContent=lots.length?lots.length+' open':'';
   $('#closeSel').textContent='Close selected'+(SELL.size?' ('+SELL.size+')':'');$('#closeSel').disabled=!SELL.size;
   const stp=(x,px)=>x>0?'<span title="'+px.toFixed(2)+'">'+(+x.toFixed(2))+'%</span>':'<span class="mute">-</span>';
-  $('#pos').innerHTML='<tr><th><input type="checkbox" class="ckb" id="ckAll" aria-label="Select all positions"'+(lots.length&&lots.every(l=>l.c||SELL.has(l.id))&&SELL.size?' checked':'')+'></th><th>Position</th><th class="tc">Time</th><th>Instrument</th><th>Qty</th><th>Entry</th><th class="tc">Last</th><th title="Your stop loss, % below entry (click a value to change it); the engine\'s 2% stop applies as well">SL % ✎</th><th title="Your take profit, % above entry (click a value to change it)">TP % ✎</th><th>Unrealized</th><th></th></tr>'+(lots.map(l=>{const p=inst(l.s).p,u=(p-l.e)*l.q,hs=l.e*(1-L.stop);return'<tr title="'+H(tip(l.ns,l.mt)+' · opened by '+l.src+' · engine 2% stop at '+hs.toFixed(2))+'"><td>'+(l.c?'':'<input type="checkbox" class="ckb" data-ck="'+l.id+'"'+(SELL.has(l.id)?' checked':'')+' aria-label="Select '+l.id+'">')+'</td><td>#'+l.id.slice(4)+(l.dlv?' <span class="mute" title="Carried overnight: delivery charges applied">dlv</span>':'')+(l.src&&l.src!=='MANUAL'?' <span class="mute">'+H(l.src==='AI-STUB'?'stub':l.src==='GRIT-AGENT'?'grit':l.src.toLowerCase())+'</span>':'')+'</td><td class="mute tc">'+tms(l.ns)+'</td><td>'+H(l.s)+'</td><td>'+qtyTxt(l.q,l.s)+'</td><td>'+l.e.toFixed(2)+'</td><td class="tc">'+p.toFixed(2)+'</td>'+(l.c?'<td>'+stp(l.sl,l.slp)+'</td><td>'+stp(l.tp,l.tpp)+'</td>':'<td class="pick" data-exits="'+l.id+'" title="Click to set or change the stop loss / take profit"><u>'+stp(l.sl,l.slp)+'</u></td><td class="pick" data-exits="'+l.id+'" title="Click to set or change the stop loss / take profit"><u>'+stp(l.tp,l.tpp)+'</u></td>')+'<td class="'+cls(u)+'">'+inr(u)+'</td><td>'+(l.c?'<span class="pill warn" title="Exit queued or being filled">CLOSING · '+H(l.by.toLowerCase())+'</span>':'<button class="btn sm sell" data-close="'+l.id+'" title="Close this position at market">Close</button>')+'</td></tr>'}).join('')||'<tr><td colspan="11" class="mute w">Flat. No simulated positions.</td></tr>');
+  /* positions: only the rows that fit the fixed panel are drawn (no scrolling); "Show all" lists every position */
+  const posRow=(l,T)=>{const p=inst(l.s).p,u=(p-l.e)*l.q,hs=l.e*(1-L.stop);return'<tr title="'+H(tip(l.ns,l.mt)+' · opened by '+l.src+' · engine 2% stop at '+hs.toFixed(2))+'"><td>'+(l.c?'':'<input type="checkbox" class="ckb" data-ck="'+l.id+'"'+(SELL.has(l.id)?' checked':'')+' aria-label="Select '+l.id+'">')+'</td><td>#'+l.id.slice(4)+(l.dlv?' <span class="mute" title="Carried overnight: delivery charges applied">dlv</span>':'')+(l.src&&l.src!=='MANUAL'?' <span class="mute">'+H(l.src==='AI-STUB'?'stub':l.src==='GRIT-AGENT'?'grit':l.src.toLowerCase())+'</span>':'')+'</td>'+(T?'<td class="mute">'+tms(l.ns)+'</td>':'')+'<td>'+H(l.s)+'</td><td>'+qtyTxt(l.q,l.s)+'</td><td>'+l.e.toFixed(2)+'</td>'+(T?'<td>'+p.toFixed(2)+'</td>':'')+(l.c?'<td>'+stp(l.sl,l.slp)+'</td><td>'+stp(l.tp,l.tpp)+'</td>':'<td class="pick" data-exits="'+l.id+'" title="Click to set or change the stop loss / take profit"><u>'+stp(l.sl,l.slp)+'</u></td><td class="pick" data-exits="'+l.id+'" title="Click to set or change the stop loss / take profit"><u>'+stp(l.tp,l.tpp)+'</u></td>')+'<td class="'+cls(u)+'" title="'+inr(u)+'">'+inr(u)+'</td><td>'+(l.c?'<span class="pill warn" title="Exit queued or being filled">CLOSING · '+H(l.by.toLowerCase())+'</span>':'<button class="btn sm sell" data-close="'+l.id+'" title="Close this position at market">Close</button>')+'</td></tr>'};
+  const pHd=(ck,T)=>'<tr><th class="k0">'+(ck?'<input type="checkbox" class="ckb" id="ckAll" aria-label="Select all positions"'+(lots.length&&lots.every(l=>l.c||SELL.has(l.id))&&SELL.size?' checked':'')+'>':'')+'</th><th class="k1">Position</th>'+(T?'<th class="k2">Time</th>':'')+'<th class="k3">Instrument</th><th class="k4">Qty</th><th class="k5">Entry</th>'+(T?'<th class="k6">Last</th>':'')+'<th class="k7" title="Your stop loss, % below entry (click a value to change it); the engine\'s 2% stop applies as well">SL ✎</th><th class="k8" title="Your take profit, % above entry (click a value to change it)">TP ✎</th><th class="k9">Unrealized</th><th class="k10"></th></tr>';
+  const pR=lots.map(l=>posRow(l,TW)),pC=capR('posFit'),pN=TW?11:9;
+  $('#pos').innerHTML=pHd(1,TW)+(pR.length?(pR.length<=pC?pR.join(''):pR.slice(0,pC-1).join('')+'<tr class="more"><td colspan="'+pN+'">+'+(pR.length-pC+1)+' more position'+(pR.length-pC+1>1?'s':'')+' <button class="btn sm" data-act="allPos">Show all '+pR.length+'</button></td></tr>'):'<tr><td colspan="'+pN+'" class="mute">Flat. No simulated positions.</td></tr>');
+  if(ALLPOS&&$('#posAll'))$('#posAll').innerHTML=pHd(0,1)+(lots.map(l=>posRow(l,1)).join('')||'<tr><td colspan="11" class="mute">Flat. No simulated positions.</td></tr>');
   const un=ps.reduce((a,[s,p])=>a+(inst(s).p-p.avg)*p.q,0);
   $('#pFoot').innerHTML='<span title="Open positions at the last price, before charges">Unrealized <b class="'+cls(un)+'">'+inr(un)+'</b></span><span>Realized <b class="'+cls(S.real)+'">'+inr(S.real)+'</b></span><span title="NSE statutory charges (STT, transaction, SEBI, stamp duty, GST); brokerage 0 until a broker is chosen. Breakdown on the Account page.">Charges <b class="dn">'+inr(-S.fees)+'</b></span><span title="Since funding: realized + unrealized - charges">= Total P&amp;L <b class="'+cls(tot)+'">'+inr(tot)+'</b></span>';
   const rows=a=>'<tr><th>Time</th><th>Event</th><th style="text-align:left">Detail</th></tr>'+(a.map(x=>'<tr><td>'+x.t+'</td><td>'+x.k+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="3" class="mute">Nothing recorded yet.</td></tr>');
@@ -532,9 +557,9 @@ $('#selMode').onchange=e=>{P.mode=e.target.value;theme()};
 new MutationObserver(theme).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',theme);
 
-let mCb=null;
-function modal(t,b,ok,cb){$('#mT').textContent=t;$('#mB').innerHTML=b;$('#mOk').textContent=ok;mCb=cb;$('#modal').classList.add('on')}
-function closeM(){$('#modal').classList.remove('on');mCb=null}
+var ALLPOS=false;let mCb=null;
+function modal(t,b,ok,cb){ALLPOS=false;$('#modal .box').classList.remove('wide');$('#mT').textContent=t;$('#mB').innerHTML=b;$('#mOk').textContent=ok;mCb=cb;$('#modal').classList.add('on')}
+function closeM(){$('#modal').classList.remove('on');mCb=null;ALLPOS=false;$('#modal .box').classList.remove('wide')}
 $('#mOk').onclick=()=>{const f=mCb;if(f&&f()===false)return;closeM();render()};
 const FUNDABLE=['INSUFFICIENT_CASH','ORDER_NOTIONAL','GROSS_EXPOSURE'];
 // price shown in tables: average fill price if filled, limit price if resting, otherwise a dash
@@ -573,6 +598,7 @@ function order(side,opt){
 function setMedia(on){$('#v-terminal').classList.toggle('nomedia',!on);render()}
 const need=()=>{if(!API){modal('Engine not running','<p>The terminal needs the C++ engine. Start the Codespace (it runs scripts/serve.sh).</p>','OK',()=>{});return false}return true};
 const ACT={
+  allPos:()=>{modal('All open positions · '+(S.lots||[]).length,'<table id="posAll"></table>','Done',()=>{});ALLPOS=true;$('#modal .box').classList.add('wide');render()},
   killOrArm:()=>S.killed?ACT.rearm():ACT.kill(),
   buy:()=>order('BUY'),sell:()=>order('SELL'),mNo:closeM,
   stub:()=>{if(need())post('stub',{on:!stub}).then(poll)},
