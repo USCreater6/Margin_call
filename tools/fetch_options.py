@@ -49,10 +49,11 @@ def main():
     strikes = sorted({float(r["StrkPric"]) for r in near})
     atm = min(range(len(strikes)), key=lambda k: abs(strikes[k] - ref))
     keep = set(strikes[max(0, atm - a.strikes): atm + a.strikes + 1])
+    print("NIFTY futures:", [(r["XpryDt"], r["ClsPric"], r.get("UndrlygPric")) for r in futs])
     print(f"day {day}; nearest expiry {exp}; {len(strikes)} strikes listed; futures close {ref}; keeping {len(keep)} strikes around {strikes[atm]}")
     out = ["# NSE F&O daily file " + str(day) + ": official open, high, low, close, previous close, traded volume and open interest.",
            "# Intraday moves are not in the file. Option prices are premiums per unit; lot = units per contract (NewBrdLotQty).",
-           "symbol,expiry,strike,type,open,high,low,close,prev_close,volume,turnover,open_interest,lot,fin_instr_name"]
+           "symbol,expiry,strike,type,open,high,low,close,prev_close,volume,turnover,open_interest,lot,fin_instr_name,underlying_close,settle"]
     for r in sorted(near, key=lambda r: (float(r["StrkPric"]), r["OptnTp"])):
         if float(r["StrkPric"]) not in keep:
             continue
@@ -60,7 +61,7 @@ def main():
         sym = f"NIFTY {exp} {k:g} {r['OptnTp']}"
         out.append(",".join([sym, exp, f"{k:g}", r["OptnTp"], r["OpnPric"], r["HghPric"], r["LwPric"], r["ClsPric"], r["PrvsClsgPric"],
                              r.get("TtlTradgVol", ""), r.get("TtlTrfVal", ""), r.get("OpnIntrst", ""), r.get("NewBrdLotQty", ""),
-                             r.get("FinInstrmNm", "").replace(",", " ")]))
+                             r.get("FinInstrmNm", "").replace(",", " "), r.get("UndrlygPric", ""), r.get("SttlmPric", "")]))
     open(os.path.join(a.out, "options.csv"), "w").write("\n".join(out) + "\n")
     print("\n".join(out[:8])); print(f"... {len(out) - 3} option rows written to {a.out}/options.csv")
 
