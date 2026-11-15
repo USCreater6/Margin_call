@@ -388,7 +388,11 @@ static void test_session_orders() {
   CHECK(s.submit(0, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 0).empty());      // market buy fills at the best ask
   CHECK(s.position(0).qty == 1); NEAR(s.position(0).avg, 1000.10);
   CHECK(s.orders().back().o.st == State::Filled && s.live_orders() == 0);
-  NEAR(s.cash(), 100000 - 1000.10 - 1000.10 * 3.0 / 1e4);                         // price plus fee
+  // NSE statutory charges on an intraday stock buy of 1,000.10 (no broker yet): transaction 0.00307% + SEBI
+  // 0.0001% + GST 18% on those two + stamp duty 0.003%; no STT on an intraday buy
+  const double v = 1000.10, txn = v * 0.0000307, sebi = v * 0.000001, chg = txn + sebi + 0.18 * (txn + sebi) + v * 0.00003;
+  NEAR(s.cash(), 100000 - v - chg);
+  NEAR(s.charges().total(), chg);
   CHECK(!s.submit(0, Side::Buy, OrdType::Market, 30, 0, "MANUAL", sec).empty());  // 30 x 1000 > 25% of equity
   CHECK(s.orders().back().o.st == State::RejectedRisk && s.position(0).qty == 1);
   CHECK(!s.submit(0, Side::Buy, OrdType::Limit, 1, 99995, "MANUAL", sec).empty()); // off-tick price
@@ -583,7 +587,7 @@ static void test_session_replay() {
   CHECK(s.price(0) == 100000);                                   // starts at the official open
   Price lo = s.price(0), hi = s.price(0);
   CHECK(s.set_speed(25));
-  for (int k = 1; k <= 900; ++k) {                               // 900 s at 25x = 22,500 market seconds
+  for (int k = 0; k <= 900; ++k) {                               // first step starts the clock; 900 s at 25x = 22,500 market seconds
     s.step(static_cast<Ts>(k) * sec);
     lo = std::min(lo, s.price(0)); hi = std::max(hi, s.price(0));
   }
@@ -760,6 +764,113 @@ static void test_agent() {
   CHECK(a.json(s).find("\"mode\":\"shadow\"") != std::string::npos);
 }
 
+// 16 Nov: owner's stop loss / take profit per position; per-strategy 1.5% daily loss; alert ids; restore guards.
+static void test_session_exits_and_strategy_loss() {
+  const Ts sec = 1000000000LL;
+  RiskLimits lim; lim.max_order_notional = 0;
+  LiveSim s(1000000.0, lim, 7); s.add_instrument("AAA", "TEST", 100000, 10);
+  // SL / TP are % of the entry price; a stop loss can be at most the engine's 2% hard stop
+  CHECK(!s.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 0, 3.0, 0).empty() && s.orders().back().code == "BAD_EXIT");
+  CHECK(!s.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 0, -1.0, 0).empty());
+  CHECK(!s.submit(0, Side::Sell, OrdType::Market, 10, 0, "MANUAL", 0, 1.0, 0).empty());     // sells carry no SL / TP
+  CHECK(s.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", sec, 1.0, 1.0).empty());
+  CHECK(s.lots().back().sl == 1.0 && s.lots().back().tp == 1.0);
+  NEAR(s.lots().back().sl_px(), s.lots().back().entry * 0.99);
+  CHECK(s.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 2 * sec).empty());
+  const OrderId b = s.lots()[1].id;
+  CHECK(!s.set_exits(b, 2.5, 0).empty() && s.set_exits(b, 0, 0.5).empty());
+  s.set_price(0, 100600); s.step(3 * sec, false);                                             // +0.5% over lot b's entry: its take profit
+  CHECK(s.lots()[1].qty == 0 && s.lots()[0].qty == 10 && s.orders().back().src == "TAKE PROFIT");
+  s.set_price(0, 98900); s.step(4 * sec, false);                                              // -1.1%: lot a's 1% stop loss (inside the 2% stop)
+  CHECK(s.lots()[0].qty == 0 && s.orders().back().src == "STOP LOSS" && s.position(0).qty == 0);
+  // events carry increasing ids for the "new alert" marker
+  long last = 0; bool inc = true; for (const auto& e : s.events()) { inc = inc && e.seq > last; last = e.seq; }
+  CHECK(inc && last > 0);
+  // an automated source that loses 1.5% of the day's starting equity is blocked; MANUAL is not
+  LiveSim g(1000000.0, lim, 7); g.add_instrument("AAA", "TEST", 100000, 10); g.set_day(0, day_aaa());   // deep book
+  CHECK(g.submit(0, Side::Buy, OrdType::Market, 900, 0, "GRIT-AGENT", 0).empty() && g.position(0).qty == 900);   // ~9 lakh of 10 lakh
+  g.set_price(0, 98200); g.step(sec, false);                                                   // -1.8%: under the 2% stop, over 1.5% of equity
+  CHECK(g.strategy_halted("GRIT-AGENT") && !g.strategy_halted("MANUAL"));
+  CHECK(!g.submit(0, Side::Buy, OrdType::Market, 1, 0, "GRIT-AGENT", 2 * sec).empty() && g.orders().back().code == "STRATEGY_HALT");
+  CHECK(g.submit(0, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 3 * sec).empty());
+  CHECK(g.submit(0, Side::Sell, OrdType::Market, 900, 0, "GRIT-AGENT", 4 * sec).empty());     // reducing is always allowed
+  // the halt survives a restart, and a snapshot without its account line is refused
+  const std::string snap = g.snapshot();
+  LiveSim h(1000000.0, lim, 7); h.add_instrument("AAA", "TEST", 100000, 10); h.set_day(0, day_aaa());
+  CHECK(h.restore(snap, 5 * sec).empty() && h.strategy_halted("GRIT-AGENT"));
+  std::string bad = snap; const auto p = bad.find("\nA\t"); bad.erase(p + 1, bad.find('\n', p + 1) - p);
+  LiveSim z(1000000.0, lim, 7); z.add_instrument("AAA", "TEST", 100000, 10);
+  CHECK(!z.restore(bad, 0).empty() && z.cash() == 1000000.0);
+}
+
+// 16 Nov: NSE statutory charges by segment; book-size rule and split orders; JSON precision on a large account.
+static void test_session_charges_split_precision() {
+  const Ts sec = 1000000000LL;
+  RiskLimits lim; lim.max_order_notional = 0;
+  // futures: STT 0.05% on the sell only; transaction 0.00183%; stamp 0.002% on the buy
+  LiveSim f(100000000.0, lim, 7); f.add_instrument("FUT", "TEST", 2500000, 10, "test", 65); f.set_segment(0, Seg::IndexFuture);
+  CHECK(f.submit(0, Side::Buy, OrdType::Market, 65, 0, "MANUAL", 0).empty());
+  const double bv = f.lots()[0].cost, bt = bv * 0.0000183, bs = bv * 0.000001;
+  NEAR(f.charges().total(), bt + bs + 0.18 * (bt + bs) + bv * 0.00002);
+  NEAR(f.charges().stt, 0.0);
+  const double before = f.charges().total();
+  CHECK(f.close_lots({f.lots()[0].id}, "MANUAL", sec) == 1 && f.position(0).qty == 0);
+  const double sv = f.orders().back().fill_val, st = sv * 0.0000183, ss = sv * 0.000001;
+  NEAR(f.charges().total() - before, sv * 0.0005 + st + ss + 0.18 * (st + ss));
+  NEAR(f.charges().stt, sv * 0.0005);
+  // stock intraday sell: STT 0.025%; carried overnight: delivery STT 0.1% on the buy and on the sell
+  LiveSim e(1000000.0, lim, 7); e.add_instrument("AAA", "TEST", 100000, 10);
+  e.set_wall_ns(1763000000000000000LL);
+  CHECK(e.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 0).empty() && e.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 0).empty());
+  CHECK(e.close_lots({e.lots()[0].id}, "MANUAL", sec) == 1);
+  NEAR(e.charges().stt, e.orders().back().fill_val * 0.00025);
+  const double stt1 = e.charges().stt, held = e.lots()[1].cost;
+  e.set_wall_ns(1763000000000000000LL + 86400000000000LL);                                    // next IST day
+  NEAR(e.charges().stt - stt1, held * 0.001);                                                  // delivery STT on the buy
+  CHECK(e.lots()[1].dlv);
+  CHECK(e.close_lots({e.lots()[1].id}, "MANUAL", 2 * sec) == 1);
+  NEAR(e.charges().stt - stt1 - held * 0.001, e.orders().back().fill_val * 0.001);            // delivery STT on the sell
+  // gold ETF: no STT at all
+  LiveSim g(1000000.0, lim, 7); g.add_instrument("GOLD", "TEST", 11200, 1); g.set_segment(0, Seg::GoldEtf);
+  CHECK(g.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 0).empty() && g.close_lots({g.lots()[0].id}, "MANUAL", sec) == 1);
+  NEAR(g.charges().stt, 0.0);
+  // equity always = funds + realized - charges + unrealized (to the paisa)
+  NEAR(e.equity(), 1000000.0 + e.realized() - e.charges().total());
+
+  // a market order larger than the book is refused and says how much is on offer
+  LiveSim m(1e10, lim, 7); m.add_instrument("FUT", "TEST", 2500000, 10, "test", 65); m.set_segment(0, Seg::IndexFuture);
+  LiveSim::Day d; d.date = "2026-11-13"; d.o = 2500000; d.h = 2510000; d.l = 2490000; d.c = 2505000; d.pc = 2500000; d.vol_units = 2733315; m.set_day(0, d);
+  const Qty offered = m.fillable_buy(0, 1000000).first;
+  CHECK(offered > 0 && offered < 65 * 1000);
+  CHECK(!m.submit(0, Side::Buy, OrdType::Market, 65 * 1000, 0, "MANUAL", 0).empty() && m.orders().back().code == "DEPTH" && m.position(0).qty == 0);
+  // as a split order it fills in slices, into ONE position
+  CHECK(m.submit(0, Side::Buy, OrdType::Market, 65 * 1000, 0, "MANUAL", sec, 1.0, 0, true).empty());
+  const OrderId par = m.orders()[1].o.id;
+  std::size_t max_rate = 0;
+  for (int k = 0; k < 200 && m.position(0).qty < 65 * 1000; ++k) {
+    const Ts t = sec + (k + 1) * 250000000LL; m.step(t, false); m.pump(t); max_rate = std::max(max_rate, m.actions_last_second(t));
+  }
+  CHECK(max_rate <= 8 && max_rate > 0);
+  CHECK(m.position(0).qty == 65 * 1000 && m.orders()[par - 1].o.st == State::Filled && m.live_orders() == 0);
+  int open_lots = 0; for (const auto& l : m.lots()) open_lots += l.qty > 0;
+  CHECK(open_lots == 1 && m.lots()[0].id == par && m.lots()[0].sl == 1.0);
+  double slices = 0; for (const auto& o : m.orders()) slices += o.parent == par ? rupees(0) + static_cast<double>(o.o.filled) * o.avg_fill() : 0.0;
+  NEAR(m.orders()[par - 1].fill_val, slices);
+  // a kill stops an open split order
+  CHECK(m.submit(0, Side::Buy, OrdType::Market, 65 * 1000, 0, "MANUAL", 300 * sec, 0, 0, true).empty());
+  m.kill(301 * sec); m.pump(305 * sec);
+  CHECK(!is_live(m.orders().back().o.st) || m.orders().back().parent != 0);
+  bool any_live_split = false; for (const auto& o : m.orders()) any_live_split = any_live_split || (o.split && is_live(o.o.st));
+  CHECK(!any_live_split);
+
+  // JSON keeps paise on a 9,800 crore account
+  LiveSim big(98000000000.0, lim, 7); big.add_instrument("AAA", "TEST", 100000, 10);
+  CHECK(big.submit(0, Side::Buy, OrdType::Market, 7, 0, "MANUAL", 0).empty());
+  const std::string j = big.state_json(0, 0);
+  const auto c0 = j.find("\"cash\":") + 7;
+  CHECK(std::fabs(std::stod(j.substr(c0, j.find(',', c0) - c0)) - big.cash()) < 0.001);   // paise survive (12 digits lost them)
+}
+
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -780,6 +891,8 @@ int main() {
       {"session: kill closes every order and position", test_session_kill_flattens},
       {"session: account survives a restart (snapshot and restore)", test_session_persistence},
       {"session: cash never negative; exit blocked by own bid is refused, not stuck", test_session_cash_and_blocked_exit},
+      {"session: stop loss / take profit per position; per-strategy daily loss; alert ids; restore guard", test_session_exits_and_strategy_loss},
+      {"session: NSE charges by segment; book-size rule and split orders; JSON precision", test_session_charges_split_precision},
       {"G.R.I.T agent: off by default, reasons, risk engine, kill, shadow, training log", test_agent},
   };
   int failed_tests = 0;

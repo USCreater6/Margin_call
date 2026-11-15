@@ -18,6 +18,7 @@ from fetch_nse import UD, LG, fetch, url_for   # noqa: E402
 
 FO = "https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{ymd}_F_0000.csv.zip"
 WATCH = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "GOLDBEES"]   # NSE cash-market rows in the watchlist
+KIND = {"GOLDBEES": "gold-etf"}   # everything else in WATCH is a company share ("stock")
 CM_MASTER = "https://nsearchives.nseindia.com/content/cm/NSE_CM_security_{dmy}.csv.gz"
 FO_MASTER = "https://nsearchives.nseindia.com/content/fo/NSE_FO_contract_{dmy}.csv.gz"
 FALLBACK_TICK = 0.01   # finest NSE step; used only when the master file cannot be read (labelled)
@@ -113,7 +114,8 @@ def main():
     lines = [f"# Replay day = NSE trading day {last}: official open, high, low, close and previous close from the NSE daily files.",
              f"# The order of high and low inside the day and every move between them are SIMULATED (daily files carry no intraday path).",
              "# tick = NSE price step from NSE's security / contract master (BidIntrvl), checked against the day's prices.",
-             "symbol,venue,price,tick,lot,source,date,open,high,low,close,prev_close,volume_units,volume_check"]
+             "# kind decides the statutory charges: gold ETFs pay no STT (GOLDBEES is Nippon India ETF Gold BeES).",
+             "symbol,venue,price,tick,lot,source,date,open,high,low,close,prev_close,volume_units,volume_check,kind"]
 
     def vol_units(vol, turnover, close, lot):
         """Traded quantity in units, verified against turnover: turnover / (volume x close) must be ~1
@@ -155,7 +157,7 @@ def main():
                 "NIFTY-FUT", "NSE F&O", f"{float(f['ClsPric']):.2f}", f"{tk:g}", str(lot),
                 f"NSE close {last} {f['FinInstrmNm'].strip()}" + ("" if tsrc == "NSE master" else " (tick not verified)"), str(last),
                 f"{float(f['OpnPric']):.2f}", f"{float(f['HghPric']):.2f}", f"{float(f['LwPric']):.2f}", f"{float(f['ClsPric']):.2f}",
-                f"{float(f['PrvsClsgPric']):.2f}", str(vu), vnote.replace(",", ";")]))
+                f"{float(f['PrvsClsgPric']):.2f}", str(vu), vnote.replace(",", ";"), "index-future"]))
     else:
         print(f"F&O file not available (HTTP {st}); NIFTY-FUT omitted")
     _, col = url_for(last)
@@ -176,7 +178,7 @@ def main():
         lines.append(",".join([
             s, "NSE", f"{float(r[col['c']]):.2f}", f"{tk:g}", "1", f"NSE close {last}" + ("" if tsrc == "NSE master" else " (tick not verified)"), str(last),
             f"{float(r[col['o']]):.2f}", f"{float(r[col['h']]):.2f}", f"{float(r[col['l']]):.2f}", f"{float(r[col['c']]):.2f}",
-            f"{float(r[col['pc']]):.2f}", str(vu), vnote.replace(",", ";")]))
+            f"{float(r[col['pc']]):.2f}", str(vu), vnote.replace(",", ";"), KIND.get(s, "stock")]))
     open(os.path.join(a.out, "instruments.csv"), "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
     if a.no_history:

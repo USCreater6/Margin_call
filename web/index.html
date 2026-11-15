@@ -22,14 +22,15 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
 button,input,select{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .mono,table,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
-header{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;padding:4px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+header{display:flex;flex-wrap:nowrap;gap:4px 8px;align-items:center;padding:4px 10px;border-bottom:1px solid var(--line);background:var(--panel);min-width:0}
+header>*{flex:none}header nav{flex:0 1 auto;min-width:0}
 .brand{font-family:var(--mono);font-weight:600;font-size:15px;color:var(--accent);letter-spacing:.04em}
 nav{display:flex;gap:0;overflow-x:auto}
-nav a{padding:5px 9px;color:var(--mute);text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap}
+nav a{padding:5px 7px;color:var(--mute);text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap}
 nav a.on{color:var(--text);border-bottom-color:var(--accent);font-weight:500}
 .spacer{flex:1}
 .kv{font-size:11px;color:var(--mute);display:flex;flex-direction:column;line-height:1.2}
-.kv b{font-family:var(--mono);font-size:13.5px;color:var(--text);font-weight:500}
+.kv b{font-family:var(--mono);font-size:12.5px;color:var(--text);font-weight:500}
 .pill{font-family:var(--mono);font-size:11px;padding:0 6px;border:1px solid var(--line);border-radius:3px;white-space:nowrap;display:inline-block}
 .pill.sim{border-color:var(--accent);color:var(--accent)}.pill.ok{border-color:var(--good);color:var(--good)}.pill.bad{border-color:var(--bad);color:var(--bad)}.pill.warn{border-color:var(--warn);color:var(--warn)}.pill.lock{color:var(--mute)}
 main{flex:1;min-height:0;padding:6px 16px}
@@ -45,13 +46,27 @@ main{flex:1;min-height:0;padding:6px 16px}
 #v-account.on{grid-template-rows:minmax(0,1fr) minmax(0,1.15fr)}
 .side{grid-column:16 / span 9;grid-row:1 / span 2;display:flex;min-width:0;min-height:0}
 /* terminal columns: with the media panel open (it takes columns 16-24) and with it hidden */
-.tw{grid-column:span 6}.tb{grid-column:span 4}.tt{grid-column:span 5}.tbl{grid-column:span 6}.tp{grid-column:span 6}.ta{grid-column:span 3}
-#v-terminal.nomedia .tw{grid-column:span 7}#v-terminal.nomedia .tb{grid-column:span 5}#v-terminal.nomedia .tt{grid-column:span 12}
-#v-terminal.nomedia .tbl{grid-column:span 8}#v-terminal.nomedia .tp{grid-column:span 11}#v-terminal.nomedia .ta{grid-column:span 5}
+.tw{grid-column:span 6}.tb{grid-column:span 4}.tt{grid-column:span 5}.tbl{grid-column:span 6}.tp{grid-column:span 9}
+#v-terminal.nomedia:not(.alerts) .tw{grid-column:span 7}#v-terminal.nomedia:not(.alerts) .tb{grid-column:span 5}#v-terminal.nomedia:not(.alerts) .tt{grid-column:span 12}
+#v-terminal.nomedia:not(.alerts) .tbl{grid-column:span 11}#v-terminal.nomedia:not(.alerts) .tp{grid-column:span 13}
+/* alerts panel: takes the media column when opened; the media panel is then hidden (TV keeps playing) */
+#alertSide{grid-column:16 / span 9;grid-row:1 / span 2;display:none;min-width:0;min-height:0}
+#v-terminal.alerts #alertSide{display:flex}#alertSide>.panel{flex:1}
+#alertList{font-family:var(--sans);font-size:14px}
+#alertList td{white-space:normal;vertical-align:top;padding:5px 8px;line-height:1.4}
+#alertList td:first-child{white-space:nowrap;font-family:var(--mono);font-size:12.5px}
+#alertList .ev{font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap}
+.side .panel{min-height:0}
+@keyframes blink{50%{background:var(--bad);color:#fff}}
+.blink{animation:blink 1s steps(1) infinite}
+tr.new td{background:var(--sell)}
+#blotter td,#blotter th,#pos td,#pos th{padding:2px 4px}#blotter,#pos{font-size:12px}
+.pfoot{flex:none;border-top:1px solid var(--line);padding:2px 8px;font-family:var(--mono);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+.g4{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:5px}
 /* hidden media keeps running (TV sound keeps playing): moved off screen, not removed */
 #v-terminal.nomedia .side{position:fixed;left:-10000px;top:0;width:640px;height:480px}
 .ckb{width:auto;margin:0;vertical-align:middle}
-#v-terminal:not(.nomedia) .tc{display:none}
+#v-terminal:not(.nomedia) .tc,#v-terminal.alerts .tc{display:none}
 .offline{background:var(--bad);color:#fff;font-family:var(--mono);font-weight:600;text-align:center;padding:2px 8px;display:none}
 .offline.on{display:block}
 .side>.panel{flex:1}
@@ -90,7 +105,7 @@ header select{width:auto;font-size:12px}
 .note{font-size:12px;color:var(--mute);margin:4px 0 0}
 .verify{color:var(--warn);font-family:var(--mono);font-size:11px;border:1px solid var(--warn);border-radius:3px;padding:0 4px;white-space:nowrap}
 .big{font-family:var(--mono);font-size:21px;font-weight:500}
-.video{flex:none;width:100%;aspect-ratio:16/9;max-height:52vh;border-bottom:1px solid var(--line);background:var(--row);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px;text-align:center;font-size:12px;color:var(--mute)}
+.video{flex:none;width:100%;aspect-ratio:16/9;max-height:40vh;border-bottom:1px solid var(--line);background:var(--row);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px;text-align:center;font-size:12px;color:var(--mute)}
 .tvbar{display:flex;gap:6px;align-items:center;padding:4px 8px;border-bottom:1px solid var(--line);flex:none}
 .tvbar select{flex:1;width:auto;min-width:0}
 .tvbar .btn{flex:none;white-space:nowrap}
@@ -157,11 +172,12 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
   <nav id="nav"><a href="#terminal">Terminal</a><a href="#connector">Connector</a><a href="#engine">G.R.I.T agent</a><a href="#account">Account</a><a href="#risk">Risk</a><a href="#admin">Admin</a></nav>
   <div class="spacer"></div>
   <span class="pill" id="state">ARMED</span><span class="pill lock" title="Locked until Stage 4 approval">LIVE: LOCKED</span>
-  <div class="kv">Demo equity<b id="hEq">-</b></div>
-  <div class="kv">Day P&amp;L (SIM)<b id="hPnl">-</b></div>
+  <div class="kv" id="hEqK">Demo equity<b id="hEq">-</b></div>
+  <div class="kv" id="hPnlK" title="Equity now minus equity at the start of today (deposits excluded). NSE charges are included.">Day P&amp;L (SIM)<b id="hPnl">-</b></div>
   <div class="kv" title="Every order, cancel and exit counts. Never more than 8 in any rolling second.">Actions / 1s<b id="hRate">0 / 8</b></div>
+  <button class="btn sm" data-act="alerts" id="alertBtn" title="Open the alerts">ALERTS</button>
   <button class="btn sm" data-act="media" id="mediaBtn" title="Show or hide live TV and adverse media">MEDIA</button>
-  <label class="kv" for="selMode">Mode<select id="selMode"><option value="auto">Auto</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+  <label class="kv" for="selMode" title="Colour mode"><select id="selMode" aria-label="Colour mode"><option value="auto">Auto</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
   <button class="btn kill" data-act="killOrArm" id="killBtn">KILL</button>
 </header>
 <main>
@@ -175,8 +191,11 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
       <label class="f" for="tType">Type<select id="tType"><option>MARKET</option><option>LIMIT</option></select></label>
       <label class="f" for="tQty"><span id="tQtyL">Quantity</span><input id="tQty" type="number" min="1" value="1"></label>
       <label class="f" for="tPx">Limit price<input id="tPx" type="number" step="0.05" placeholder="market"></label>
+      <label class="f" for="tSl" title="BUY only. % below the entry price; the position closes at market when the last price falls there. At most 2% (the engine's hard stop).">Stop loss % (optional, max 2)<input id="tSl" type="number" step="0.1" min="0" max="2" placeholder="none"></label>
+      <label class="f" for="tTp" title="BUY only. % above the entry price; the position closes at market when the last price rises there.">Take profit % (optional)<input id="tTp" type="number" step="0.1" min="0" placeholder="none"></label>
       <button class="btn buy" data-act="buy">BUY</button><button class="btn sell" data-act="sell">SELL</button>
     </div>
+    <p class="note" id="tFill"></p>
     <p class="note" id="tMsg">Every order passes the risk engine first.</p>
     <div class="row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px;align-items:center">
       <span class="pill lock" id="agPill" title="Set on the G.R.I.T agent tab">G.R.I.T AGENT: OFF</span>
@@ -191,9 +210,9 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
       <div class="fix"><table id="news"></table></div>
     </div>
   </div>
+  <div id="alertSide"><div class="panel"><h2>Alerts <span class="row" style="gap:4px;align-items:center"><span class="mono" id="alN"></span><button class="btn sm" data-act="alerts" title="Close the alerts">Close ▸</button></span></h2><div class="scroll"><table id="alertList"></table></div></div></div>
   <div class="panel tbl"><h2>Order blotter <button class="btn sm" data-act="cancelAll">Cancel all</button></h2><div class="scroll"><table id="blotter"></table></div></div>
-  <div class="panel tp"><h2>Positions <span class="mono" id="posN"></span> <span class="row" style="gap:4px"><button class="btn sm" data-act="closeSel" id="closeSel">Close selected</button><button class="btn sm" data-act="flatten">Flatten all</button></span></h2><div class="scroll"><table id="pos"></table></div></div>
-  <div class="panel ta"><h2>Alerts</h2><div class="scroll"><table id="alerts"></table></div></div>
+  <div class="panel tp"><h2>Positions <span class="mono" id="posN"></span> <span class="row" style="gap:4px"><button class="btn sm" data-act="closeSel" id="closeSel">Close selected</button><button class="btn sm" data-act="flatten">Flatten all</button></span></h2><div class="scroll"><table id="pos"></table></div><div class="pfoot" id="pFoot"></div></div>
 </section>
 
 <section class="view" id="v-connector">
@@ -226,26 +245,26 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 </section>
 
 <section class="view" id="v-account">
-  <div class="panel c3"><h2>Demo wallet <span class="pill sim">DEMO FUNDS</span></h2><div class="scroll"><div class="body">
+  <div class="panel c4"><h2>Demo wallet <span class="pill sim">DEMO FUNDS</span></h2><div class="scroll"><div class="body">
     <div class="mute">Available cash</div><div class="big" id="wCash">-</div>
     <div class="row" style="margin-top:6px"><button class="btn pri" data-act="fund">Fund wallet</button><button class="btn" data-act="reset">Reset demo</button></div>
     <p class="note">Demo money only. In live stages funds stay in your broker account.</p>
     <table id="wSum" style="margin-top:6px"></table>
   </div></div></div>
-  <div class="panel c5"><h2>Day P&amp;L curve <span class="pill sim">SIM · THIS SESSION</span></h2><div class="scroll"><div class="body" id="curve"></div></div></div>
+  <div class="panel c4"><h2>Day P&amp;L curve <span class="pill sim">SIM · THIS SESSION</span></h2><div class="scroll"><div class="body" id="curve"></div></div></div>
   <div class="panel c4"><h2>Day summary</h2><div class="scroll"><table id="daySum"></table></div></div>
-  <div class="panel c8"><h2>Order history, today <span class="mono" id="histN"></span></h2><div class="scroll"><table id="hist"></table></div></div>
-  <div class="panel c4"><h2>Wallet ledger</h2><div class="scroll"><table id="ledger"></table></div></div>
+  <div class="panel c7"><h2>Order history, today <span class="mono" id="histN"></span></h2><div class="scroll"><table id="hist"></table></div></div>
+  <div class="panel c5"><h2>Wallet ledger</h2><div class="scroll"><table id="ledger"></table></div></div>
 </section>
 
 <section class="view" id="v-risk">
-  <div class="panel c7"><h2>Risk limits <span class="pill warn">PROPOSED · NEED APPROVAL</span></h2><div class="fix"><table id="risk"></table></div></div>
+  <div class="panel c7"><h2>Risk limits <span class="pill ok">APPROVED BY YOU</span></h2><div class="fix"><table id="risk"></table></div></div>
   <div class="panel c5"><h2>Strategy router <span class="pill sim">SIM ONLY</span></h2><div class="fix"><table id="strat"></table></div></div>
   <div class="panel c4"><h2>Exposure by instrument</h2><div class="scroll"><table id="expo"></table></div></div>
   <div class="panel c5"><h2>Risk events, today</h2><div class="scroll"><table id="revt"></table></div></div>
   <div class="panel c3"><h2>Emergency controls</h2><div class="scroll"><div class="body stack">
     <button class="btn kill" data-act="kill">KILL SWITCH</button><button class="btn" data-act="cancelAll">Cancel all orders</button><button class="btn" data-act="flatten">Flatten all positions</button>
-    <p class="note">Owner only. Each control asks for confirmation and is written to the audit trail. Strategy logic is not built yet.</p>
+    <p class="note">Owner only. Each control asks for confirmation and is written to the audit trail.</p>
   </div></div></div>
 </section>
 
@@ -263,18 +282,18 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
   <div class="panel c6"><h2>Backtest and latency</h2><div class="scroll"><div class="body" id="rep"><div class="empty">No results loaded. Run <span class="mono">scripts/build_and_report.sh</span>; the C++ engine writes its SIMULATION report to <span class="mono">web/reports/</span> and it appears here.</div></div></div></div>
   <div class="panel c6"><h2>Data sources</h2><div class="scroll"><table>
     <tr><th>Feed</th><th>Source</th><th>API key</th><th>Covers</th><th>Status</th></tr>
-    <tr><td>Prices</td><td class="w">NSE daily files: equity and F&amp;O bhavcopy, index closes</td><td>none</td><td class="w">Starting prices (last close) and one year of daily history, fetched when the terminal starts</td><td><span class="pill ok">in use</span></td></tr>
+    <tr><td>Prices</td><td class="w">NSE daily files: equity and F&amp;O bhavcopy; security and contract masters</td><td>none</td><td class="w">Replay day (official open, high, low, close, volume), price steps (BidIntrvl), lot sizes, one year of daily history</td><td><span class="pill ok">in use</span></td></tr>
     <tr><td>Prices</td><td class="w">MCX daily files</td><td>-</td><td class="w">Commodity futures</td><td><span class="pill bad">blocked (HTTP 403)</span></td></tr>
-    <tr><td>News text</td><td class="w">GDELT DOC 2.0 API</td><td>none</td><td class="w">Global news search with tone, rolling window of about 3 months</td><td><span class="pill">not loaded</span></td></tr>
-    <tr><td>News text</td><td class="w">Publisher RSS feeds and NSE / BSE announcements</td><td>none</td><td class="w">Indian business headlines and company filings</td><td><span class="verify">must verify terms</span></td></tr>
+    <tr><td>News text</td><td class="w">GDELT DOC 2.0 API</td><td>none</td><td class="w">Global news search with tone</td><td><span class="pill warn">often refuses cloud machines (HTTP 429)</span></td></tr>
+    <tr><td>News text</td><td class="w">NSE corporate announcements</td><td>none</td><td class="w">Company filings, tagged ADVERSE by a keyword rule</td><td><span class="pill ok">in use</span></td></tr>
     <tr><td>News text</td><td class="w">Keyed news APIs</td><td>free key, your sign-up</td><td class="w">Extra coverage; limits differ per provider</td><td><span class="verify">must verify</span></td></tr>
-    <tr><td>Video</td><td class="w">Official live-stream embeds of news channels</td><td>none</td><td class="w">Live TV panel</td><td><span class="verify">must verify per channel</span></td></tr>
+    <tr><td>Video</td><td class="w">YouTube live streams of 14 business channels (IDs checked against YouTube's own feed)</td><td>none</td><td class="w">Live TV panel</td><td><span class="pill ok">in use</span> <span class="verify">playback inside the page: YouTube decides per channel</span></td></tr>
     <tr><td>Connector</td><td class="w">NSE equity list and BSE daily file</td><td>none</td><td class="w">All listed codes, matched by ISIN</td><td><span class="pill ok">in use</span></td></tr>
     <tr><td>Connector</td><td class="w">GLEIF API (who owns whom), via LEIs held in Wikidata</td><td>none</td><td class="w">Direct parent and subsidiaries</td><td><span class="pill ok">in use</span></td></tr>
     <tr><td>Connector</td><td class="w">Wikidata (subsidiary, parent, owner, owned company)</td><td>none</td><td class="w">About 200 NSE-listed companies, 75 with links (probe, 13 Nov 2026)</td><td><span class="pill ok">in use</span></td></tr>
     <tr><td>Connector</td><td class="w">Annual-report lists (tools/connector_annual_reports.csv)</td><td>none</td><td class="w">Subsidiaries, associates, joint ventures with page references</td><td><span class="pill warn">file ready, empty</span></td></tr>
     <tr><td>Connector</td><td class="w">Supplier and customer links</td><td>-</td><td class="w">No free dataset found. Bloomberg's is proprietary.</td><td><span class="pill lock">not available free</span></td></tr>
-    <tr><td>Fundamentals</td><td class="w">NSE / BSE result, corporate-action and shareholding filings</td><td>none</td><td class="w">Financials, actions, shareholding</td><td><span class="verify">must verify access</span></td></tr>
+    <tr><td>Fundamentals</td><td class="w">NSE result (XBRL), corporate-action and shareholding filings</td><td>none</td><td class="w">Financials, actions, shareholding (NIFTY 50 first, then NIFTY 500)</td><td><span class="pill ok">in use</span></td></tr>
   </table></div></div>
 </section>
 
@@ -287,6 +306,9 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 const $=s=>document.querySelector(s);
 const inr=n=>(n<0?'-':'')+'₹'+Math.abs(n).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const pct=n=>(n*100).toFixed(2)+'%';
+/* small percentages on a large account stay visible: 0.0001% instead of 0.00% */
+const pctA=n=>{const v=n*100,a=Math.abs(v);return(v>0?'+':'')+(a===0?'0.00':a<0.01?String(+v.toPrecision(2)):v.toFixed(2))+'%'};
+
 const cls=n=>n>0?'up':n<0?'dn':'mute';
 const now=()=>new Date().toLocaleTimeString('en-GB');
 const L={stop:.02,profit:.10,loss:.03,stratLoss:.015,gross:1,maxPos:3,maxOrd:6,rate:8};
@@ -295,13 +317,14 @@ const STR=[{n:'Momentum',ph:'Launch',a:.5},{n:'Mean reversion',ph:'Launch',a:.5}
 const HEAD=[['ADVERSE','SAMPLE','Live NSE filings appear here once the news feed has loaded']];
 let API=false;
 let S,stub=false,tk=0,hi=0,news=[],SELL=new Set(),RP=null,C={isin:'',pick:null,data:null,idx:null,hist:{}};
-function fresh(){S={cash:0,dep:0,real:0,fees:0,turn:0,curve:[],orders:[],pos:{},lots:[],audit:[],ledger:[],killed:false,halt:'',lock:false,sel:0,rate:0,queued:0}}
+function fresh(){S={chg:{},cash:0,dep:0,real:0,fees:0,turn:0,curve:[],orders:[],pos:{},lots:[],audit:[],ledger:[],killed:false,halt:'',lock:false,sel:0,rate:0,queued:0,day_start:0,strats:[],evseq:0}}
 fresh();
 const START=()=>S.start||0;
 const inst=s=>I.find(i=>i.s===s)||{p:0,lot:1};
 const equity=()=>S.cash+Object.entries(S.pos).reduce((a,[s,p])=>a+p.q*inst(s).p,0);
 const base=()=>START()+S.dep;
-const dayPnl=()=>equity()-base();
+const totPnl=()=>equity()-base();
+const dayPnl=()=>equity()-(S.day_start||base());   /* vs equity at the start of today; deposits move the start too */
 const gross=()=>Object.entries(S.pos).reduce((a,[s,p])=>a+Math.abs(p.q*inst(s).p),0);
 const isOpen=o=>o.st==='ACKED'||o.st==='PARTIALLY_FILLED';
 const openOrd=()=>S.orders.filter(isOpen);
@@ -332,8 +355,9 @@ let TAPE='';
 function setTape(h){if(h===TAPE)return;TAPE=h;const t=$('#tape');t.innerHTML=h;requestAnimationFrame(()=>{const px=t.scrollWidth+innerWidth;t.style.animationDuration=Math.max(30,Math.round(px/40))+'s'})}
 
 function render(){
-  const eq=equity(),d=dayPnl(),ps=Object.entries(S.pos);
-  $('#hEq').textContent=inr(eq);$('#hPnl').textContent=inr(d)+' ('+pct(d/base())+')';$('#hPnl').className=cls(d);
+  const eq=equity(),d=dayPnl(),tot=totPnl(),ps=Object.entries(S.pos),ds=S.day_start||base();
+  $('#hEq').textContent=inr(eq);$('#hEqK').title='Equity '+inr(eq)+' = cash '+inr(S.cash)+' + positions at last price. Funded in total: '+inr(base())+'. Total P&L since funding: '+inr(tot)+'.';
+  $('#hPnl').textContent=inr(d)+' ('+pctA(ds?d/ds:0)+')';$('#hPnl').className=cls(d);
   $('#hRate').textContent=rateNow()+' / '+(S.rate_max||8)+(S.queued?' · '+S.queued+' queued':'');
   $('#offline').classList.toggle('on',!API||fails>=3);
   $('#offMsg').textContent=!API?'ENGINE NOT RUNNING: the terminal needs the C++ engine (it starts with the Codespace). No orders can be placed.':LOST;
@@ -349,30 +373,47 @@ function render(){
   if(!NEWS)$('#news').innerHTML='<tr><th>Time</th><th>Tag</th><th>Topic</th><th style="text-align:left">Headline (sample)</th></tr>'+news.slice(0,3).map(x=>'<tr><td>'+x.t+'</td><td><span class="pill '+(x.k==='ADVERSE'?'bad':'lock')+'">'+x.k+'</span></td><td>'+x.g+'</td><td class="w">'+x.m+'</td></tr>').join('');
   if(NEWS)renderNews();
   if(!NEWS)setTape(HEAD.map(h=>'<span>SAMPLE · <b class="mute">'+h[0]+'</b> · '+h[2]+'</span>').join(''));
-  const stx=o=>o.st==='FILLED'?'FILLED':o.st==='REJECTED_RISK'?'VETO':o.st==='ACKED'?'OPEN':o.st==='PARTIALLY_FILLED'?'PART '+o.f+'/'+o.q:o.st==='CANCELLED'?(o.f>0?'CXL · '+o.f+'/'+o.q+' filled':'CXL'):o.st;
-  $('#blotter').innerHTML='<tr><th>Order</th><th class="tc">Time</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,40).map(o=>'<tr title="'+H(tip(o.ns,o.mt)+' · '+o.src+(o.lot?' · closes lot '+o.lot:'')+(o.why?' · '+o.why:''))+'"><td>#'+o.id.slice(4)+(o.src==='AI-STUB'?' <span class="mute">stub</span>':o.src!=='MANUAL'?' <span class="mute">'+H(o.src.toLowerCase())+'</span>':'')+'</td><td class="mute tc">'+tms(o.ns)+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+qtyTxt(o.q,o.s)+'</td><td>'+H(o.s)+'</td><td>'+pxCell(o)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+o.st+'">'+stx(o)+'</span></td></tr>'+(o.st==='REJECTED_RISK'&&o===S.orders[0]?'<tr><td colspan="7" class="w dn" style="font-size:11px">'+H(o.why)+(FUNDABLE.includes(o.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':'')+'</td></tr>':'')).join('')||'<tr><td colspan="7" class="mute w">No simulated orders yet.</td></tr>');
+  const qq=(a,b,s)=>{const l=inst(s).lot||1;return l>1?(a/l).toLocaleString('en-IN')+'/'+(b/l).toLocaleString('en-IN')+' L':a.toLocaleString('en-IN')+'/'+b.toLocaleString('en-IN')};
+  const stx=o=>o.split&&isOpen(o)?'SPLIT '+qq(o.f,o.q,o.s):o.split&&o.st==='CANCELLED'?'SPLIT '+qq(o.f,o.q,o.s)+' · stopped':o.st==='FILLED'?'FILLED':o.st==='REJECTED_RISK'?'VETO':o.st==='ACKED'?'OPEN':o.st==='PARTIALLY_FILLED'?'PART '+qN(o.f,o.s)+' of '+qN(o.q,o.s):o.st==='CANCELLED'?(o.f>0?qN(o.f,o.s)+' filled · rest CXL':'CXL'):o.st;
+  $('#blotter').innerHTML='<tr><th>Order</th><th class="tc">Time</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Price</th><th>State</th></tr>'+(S.orders.slice(0,40).map(o=>'<tr title="'+H(tip(o.ns,o.mt)+' · '+o.src+(o.lot?' · closes lot '+o.lot:'')+(o.why?' · '+o.why:''))+'"><td>#'+o.id.slice(4)+(o.split?' <span class="mute">split</span>':'')+(o.src==='AI-STUB'?' <span class="mute">stub</span>':o.src!=='MANUAL'?' <span class="mute">'+H(o.src.toLowerCase())+'</span>':'')+'</td><td class="mute tc">'+tms(o.ns)+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+qtyTxt(o.q,o.s)+'</td><td>'+H(o.s)+'</td><td>'+pxCell(o)+'</td><td>'+(isOpen(o)?'<button class="btn sm" data-cx="'+o.id+'" title="Cancel order" aria-label="Cancel order '+o.id+'">✕</button> ':'')+'<span class="pill '+(o.st==='FILLED'?'ok':o.st==='REJECTED_RISK'?'bad':isOpen(o)?'warn':'lock')+'" title="'+o.st+'">'+stx(o)+'</span></td></tr>'+(o.st==='REJECTED_RISK'&&o===S.orders[0]?'<tr><td colspan="7" class="w dn" style="font-size:11px">'+H(o.why)+(FUNDABLE.includes(o.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':'')+'</td></tr>':'')).join('')||'<tr><td colspan="7" class="mute w">No simulated orders yet.</td></tr>');
   const lots=S.lots||[];[...SELL].forEach(id=>{if(!lots.some(l=>l.id===id&&!l.c))SELL.delete(id)});
   $('#posN').textContent=lots.length?lots.length+' open':'';
   $('#closeSel').textContent='Close selected'+(SELL.size?' ('+SELL.size+')':'');$('#closeSel').disabled=!SELL.size;
-  $('#pos').innerHTML='<tr><th><input type="checkbox" class="ckb" id="ckAll" aria-label="Select all positions"'+(lots.length&&lots.every(l=>l.c||SELL.has(l.id))&&SELL.size?' checked':'')+'></th><th>Position</th><th class="tc">Time</th><th>Instrument</th><th>Qty</th><th>Entry</th><th class="tc">Last</th><th>Unrealized</th><th></th></tr>'+(lots.map(l=>{const p=inst(l.s).p,u=(p-l.e)*l.q;return'<tr title="'+H(tip(l.ns,l.mt))+'"><td>'+(l.c?'':'<input type="checkbox" class="ckb" data-ck="'+l.id+'"'+(SELL.has(l.id)?' checked':'')+' aria-label="Select '+l.id+'">')+'</td><td>#'+l.id.slice(4)+'</td><td class="mute tc">'+tms(l.ns)+'</td><td>'+H(l.s)+'</td><td>'+qtyTxt(l.q,l.s)+'</td><td>'+l.e.toFixed(2)+'</td><td class="tc">'+p.toFixed(2)+'</td><td class="'+cls(u)+'">'+inr(u)+'</td><td>'+(l.c?'<span class="pill warn" title="Exit queued or being filled">CLOSING · '+H(l.by.toLowerCase())+'</span>':'<button class="btn sm sell" data-close="'+l.id+'" title="Close this position at market">Close</button>')+'</td></tr>'}).join('')||'<tr><td colspan="9" class="mute w">Flat. No simulated positions.</td></tr>');
+  const stp=(x,px)=>x>0?'<span title="'+px.toFixed(2)+'">'+(+x.toFixed(2))+'%</span>':'<span class="mute">-</span>';
+  $('#pos').innerHTML='<tr><th><input type="checkbox" class="ckb" id="ckAll" aria-label="Select all positions"'+(lots.length&&lots.every(l=>l.c||SELL.has(l.id))&&SELL.size?' checked':'')+'></th><th>Position</th><th class="tc">Time</th><th>Instrument</th><th>Qty</th><th>Entry</th><th class="tc">Last</th><th title="Your stop loss, % below entry (click a value to change it); the engine\'s 2% stop applies as well">SL % ✎</th><th title="Your take profit, % above entry (click a value to change it)">TP % ✎</th><th>Unrealized</th><th></th></tr>'+(lots.map(l=>{const p=inst(l.s).p,u=(p-l.e)*l.q,hs=l.e*(1-L.stop);return'<tr title="'+H(tip(l.ns,l.mt)+' · opened by '+l.src+' · engine 2% stop at '+hs.toFixed(2))+'"><td>'+(l.c?'':'<input type="checkbox" class="ckb" data-ck="'+l.id+'"'+(SELL.has(l.id)?' checked':'')+' aria-label="Select '+l.id+'">')+'</td><td>#'+l.id.slice(4)+(l.dlv?' <span class="mute" title="Carried overnight: delivery charges applied">dlv</span>':'')+(l.src&&l.src!=='MANUAL'?' <span class="mute">'+H(l.src==='AI-STUB'?'stub':l.src==='GRIT-AGENT'?'grit':l.src.toLowerCase())+'</span>':'')+'</td><td class="mute tc">'+tms(l.ns)+'</td><td>'+H(l.s)+'</td><td>'+qtyTxt(l.q,l.s)+'</td><td>'+l.e.toFixed(2)+'</td><td class="tc">'+p.toFixed(2)+'</td>'+(l.c?'<td>'+stp(l.sl,l.slp)+'</td><td>'+stp(l.tp,l.tpp)+'</td>':'<td class="pick" data-exits="'+l.id+'" title="Click to set or change the stop loss / take profit"><u>'+stp(l.sl,l.slp)+'</u></td><td class="pick" data-exits="'+l.id+'" title="Click to set or change the stop loss / take profit"><u>'+stp(l.tp,l.tpp)+'</u></td>')+'<td class="'+cls(u)+'">'+inr(u)+'</td><td>'+(l.c?'<span class="pill warn" title="Exit queued or being filled">CLOSING · '+H(l.by.toLowerCase())+'</span>':'<button class="btn sm sell" data-close="'+l.id+'" title="Close this position at market">Close</button>')+'</td></tr>'}).join('')||'<tr><td colspan="11" class="mute w">Flat. No simulated positions.</td></tr>');
+  const un=ps.reduce((a,[s,p])=>a+(inst(s).p-p.avg)*p.q,0);
+  $('#pFoot').innerHTML='<span title="Open positions at the last price, before charges">Unrealized <b class="'+cls(un)+'">'+inr(un)+'</b></span><span>Realized <b class="'+cls(S.real)+'">'+inr(S.real)+'</b></span><span title="NSE statutory charges (STT, transaction, SEBI, stamp duty, GST); brokerage 0 until a broker is chosen. Breakdown on the Account page.">Charges <b class="dn">'+inr(-S.fees)+'</b></span><span title="Since funding: realized + unrealized - charges">= Total P&amp;L <b class="'+cls(tot)+'">'+inr(tot)+'</b></span>';
   const rows=a=>'<tr><th>Time</th><th>Event</th><th style="text-align:left">Detail</th></tr>'+(a.map(x=>'<tr><td>'+x.t+'</td><td>'+x.k+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="3" class="mute">Nothing recorded yet.</td></tr>');
-  $('#alerts').innerHTML='<tr><th>Event</th><th style="text-align:left">Detail</th></tr>'+((S.recent||S.audit).filter(x=>x.k!=='ORDER'&&x.k!=='FILL').slice(0,20).map(x=>'<tr title="'+x.t+'"><td>'+H(x.k)+'</td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="2" class="mute">Nothing recorded yet.</td></tr>');
+  /* alerts: every engine event except plain order and fill lines; newest first, merged from the fast and full state */
+  const amap={};(S.alertsFull||[]).concat(S.recent||[]).forEach(x=>{amap[x.n]=x});
+  const al=Object.values(amap).sort((x,y)=>y.n-x.n),aOpen=$('#v-terminal').classList.contains('alerts');
+  if(aOpen&&S.evseq>SEEN)markSeen();
+  const fresh_=al.filter(x=>x.n>SEEN),bad=k=>/VETO|STOP|HALT|KILL|LOCKOUT|BLOCKED|PARTIAL|DEPTH/.test(k);
+  $('#alertList').innerHTML='<tr><th>Time</th><th>Event</th><th style="text-align:left">Detail</th></tr>'+(al.slice(0,150).map(x=>'<tr'+(x.n>OPENSEEN&&aOpen?' class="new"':'')+'><td class="mute">'+x.t+'</td><td><span class="ev '+(bad(x.k)?'dn':'')+'">'+H(x.k)+'</span></td><td class="w">'+H(x.m)+'</td></tr>').join('')||'<tr><td colspan="3" class="mute">Nothing recorded yet.</td></tr>');
+  $('#alN').textContent=al.length+' alerts';
+  const ab=$('#alertBtn');ab.textContent='ALERTS'+(fresh_.length?' '+fresh_.length:'');ab.classList.toggle('blink',fresh_.length>0);ab.classList.toggle('pri',aOpen);
+  ab.title=aOpen?'Close the alerts':fresh_.length?fresh_.length+' new alert(s): click to read them':'Open the alerts';
+  const hidden=$('#v-terminal').classList.contains('nomedia')&&!aOpen,mb=$('#mediaBtn');
+  mb.textContent=$('#v-terminal').classList.contains('nomedia')?'◂ MEDIA':'MEDIA ▸';
+  mb.title=$('#v-terminal').classList.contains('nomedia')?'Show live TV and adverse media'+(NEWS?' · '+NEWS.items.filter(x=>x.tag==='ADVERSE').length+' adverse headlines':''):'Hide the media panel (TV keeps playing)';
+  mb.classList.toggle('pri',hidden);
   $('#audit').innerHTML=rows(S.audit.slice(0,80));
   $('#wCash').textContent=inr(S.cash);
-  const un=ps.reduce((a,[s,p])=>a+(inst(s).p-p.avg)*p.q,0);
-  $('#wSum').innerHTML=[['Demo funds added (total)',base()],['Gross exposure',gross()],['Realized P&L (SIM)',S.real],['Unrealized P&L (SIM)',un],['Fees (placeholder 0.03%)',-S.fees],['Equity',eq]].map(r=>'<tr><td>'+r[0]+'</td><td>'+inr(r[1])+'</td></tr>').join('');
+  $('#wSum').innerHTML=[['Demo funds added (total)',base()],['Equity at start of today',ds],['Gross exposure',gross()],['Realized P&L (SIM)',S.real],['Unrealized P&L (SIM)',un],['NSE charges (total)',-S.fees],['· STT',-(S.chg.stt||0)],['· Exchange transaction',-(S.chg.txn||0)],['· SEBI fee',-(S.chg.sebi||0)],['· Stamp duty',-(S.chg.stamp||0)],['· GST',-(S.chg.gst||0)],['· Brokerage (no broker yet)',-(S.chg.brk||0)],['Total P&L since funding',tot],['Equity',eq]].map(r=>'<tr><td>'+r[0]+'</td><td>'+inr(r[1])+'</td></tr>').join('');
   $('#ledger').innerHTML='<tr><th>Time</th><th>Entry</th><th>Amount</th><th>Funded total</th></tr>'+S.ledger.map(x=>'<tr><td>'+x.t+'</td><td>'+x.k+'</td><td>'+inr(x.a)+'</td><td>'+inr(x.b)+'</td></tr>').join('');
   const cnt=f=>S.orders.filter(f).length;
   $('#curve').innerHTML=curve();
-  $('#daySum').innerHTML='<tr><th>Item</th><th>Value</th></tr>'+[['Net day P&L (SIM)',inr(d),cls(d)],['Realized',inr(S.real),cls(S.real)],['Unrealized',inr(un),cls(un)],['Fees (placeholder 0.03%)',inr(-S.fees),''],['Turnover',inr(S.turn),''],['Orders placed',S.orders.length,''],['Filled',cnt(o=>o.st==='FILLED'),''],['Rejected by risk',cnt(o=>o.st==='REJECTED_RISK'),''],['Cancelled',cnt(o=>o.st==='CANCELLED'),''],['Open',openOrd().length,''],['From AI stub',cnt(o=>o.src==='AI-STUB'),'']].map(r=>'<tr><td>'+r[0]+'</td><td class="'+r[2]+'">'+r[1]+'</td></tr>').join('');
+  $('#daySum').innerHTML='<tr><th>Item</th><th>Value</th></tr>'+[['Day P&L (SIM, vs start of today)',inr(d),cls(d)],['Total P&L since funding',inr(tot),cls(tot)],['Realized',inr(S.real),cls(S.real)],['Unrealized',inr(un),cls(un)],['NSE charges',inr(-S.fees),''],['Turnover',inr(S.turn),''],['Orders placed',S.orders.length,''],['Filled',cnt(o=>o.st==='FILLED'),''],['Rejected by risk',cnt(o=>o.st==='REJECTED_RISK'),''],['Cancelled',cnt(o=>o.st==='CANCELLED'),''],['Open',openOrd().length,''],['From AI stub',cnt(o=>o.src==='AI-STUB'),'']].map(r=>'<tr><td>'+r[0]+'</td><td class="'+r[2]+'">'+r[1]+'</td></tr>').join('');
   $('#histN').textContent=S.orders.length+' orders';
   $('#hist').innerHTML='<tr><th>Order</th><th>Time</th><th>Source</th><th>Side</th><th>Qty</th><th>Instrument</th><th>Type</th><th>Price</th><th>State</th><th style="text-align:left">Risk reason</th></tr>'+(S.orders.map(o=>'<tr><td>'+o.id+'</td><td>'+o.t+'</td><td class="mute">'+o.src+'</td><td class="'+(o.side==='BUY'?'up':'dn')+'">'+o.side+'</td><td>'+o.q+'</td><td>'+o.s+'</td><td>'+o.type+'</td><td>'+pxCell(o)+'</td><td>'+o.st+'</td><td class="w">'+H(o.why||'')+'</td></tr>').join('')||'<tr><td colspan="10" class="mute">No simulated orders yet today.</td></tr>');
   $('#expo').innerHTML='<tr><th>Instrument</th><th>Qty</th><th>Value</th><th>% of equity</th><th>Share</th></tr>'+I.map(i=>{const p=S.pos[i.s],v=p?Math.abs(p.q*i.p):0;return'<tr><td>'+i.s+'</td><td>'+(p?p.q:0)+'</td><td>'+inr(v)+'</td><td>'+pct(v/eq)+'</td><td><div class="bar"><i style="width:'+Math.min(100,v/eq*100).toFixed(0)+'%"></i></div></td></tr>'}).join('');
   $('#revt').innerHTML=rows(S.audit.filter(x=>['RISK VETO','STOP','HALT','LOCKOUT','KILL SWITCH','CANCEL ALL','FLATTEN','RE-ARM'].includes(x.k)).slice(0,60));
-  $('#strat').innerHTML='<tr><th>Strategy</th><th>Phase</th><th>Allocation</th><th>Status</th></tr>'+STR.map((x,k)=>'<tr><td>'+x.n+'</td><td class="mute">'+x.ph+'</td><td>'+(x.a?pct(x.a):'-')+'</td><td>'+(x.a?(API?'<span class="pill" title="Runs in the backtest on the AI Engine page; not yet connected to the live session">BACKTEST ONLY</span>':'<button class="btn sm" data-st="'+k+'">'+(x.on?'Enabled in SIM':'Disabled')+'</button>'):'<span class="pill lock">LOCKED</span>')+'</td></tr>').join('');
+  $('#strat').innerHTML='<tr><th>Strategy</th><th>Phase</th><th>Allocation</th><th>Status</th></tr>'+STR.map(x=>'<tr><td>'+x.n+'</td><td class="mute">'+x.ph+'</td><td>'+(x.a?pct(x.a):'-')+'</td><td>'+(x.n==='G.R.I.T agent'?'<span class="pill sim">SET ON ITS TAB</span>':x.a?'<span class="pill" title="Runs in the backtest (results on the Admin page); not connected to the terminal session">BACKTEST ONLY</span>':'<span class="pill lock">LOCKED</span>')+'</td></tr>').join('')
+    +'<tr><th>Today, per source</th><th>P&amp;L</th><th>Limit</th><th>Status</th></tr>'+((S.strats||[]).map(x=>'<tr><td>'+H(x.src)+'</td><td class="'+cls(x.pnl)+'">'+inr(x.pnl)+'</td><td>'+(x.limited?inr(-S.strat_cap*ds):'<span class="mute">global only</span>')+'</td><td>'+(x.halted?'<span class="pill bad">HALTED</span>':'<span class="pill ok">OK</span>')+'</td></tr>').join('')||'<tr><td colspan="4" class="mute">No orders today.</td></tr>');
   const bar=(u,m)=>{const r=Math.min(1,Math.max(0,u/m));return'<div class="bar"><i class="'+(r>.9?'b':r>.6?'w':'')+'" style="width:'+(r*100).toFixed(0)+'%"></i></div>'};
-  const R=[['Per-trade stop','2% of trade capital',0,'auto-exit',''],['Daily profit lockout','+10% · '+inr(L.profit*base()),0,inr(Math.max(0,d)),bar(Math.max(0,d),L.profit*base())],['Global daily loss','3% · '+inr(L.loss*base()),1,inr(Math.max(0,-d)),bar(Math.max(0,-d),L.loss*base())],['Per-strategy daily loss','1.5% · '+inr(L.stratLoss*base()),1,'no runs',''],['Max order value','removed by you, 14 Nov',0,'-',''],['Gross exposure','100% of equity',1,inr(gross()),bar(gross(),L.gross*eq)],['Open instruments',String(L.maxPos),1,String(ps.length),bar(ps.length,L.maxPos)],['Open orders',String(L.maxOrd),1,String(openOrd().length),bar(openOrd().length,L.maxOrd)],['Action rate (orders, cancels, exits)','8 in any rolling second',0,rateNow()+' in last 1s'+(S.queued?', '+S.queued+' queued':''),bar(rateNow(),L.rate)]];
-  $('#risk').innerHTML='<tr><th>Limit</th><th>Value</th><th>Source</th><th>Used now</th><th>Usage</th></tr>'+R.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td>'+(r[2]?'<span class="pill warn">proposed</span>':'<span class="mute">fixed by you</span>')+'</td><td>'+r[3]+'</td><td>'+(r[4]||'<span class="mute">-</span>')+'</td></tr>').join('');
+  const worst=(S.strats||[]).filter(x=>x.limited).reduce((m,x)=>Math.min(m,x.pnl),0);
+  const R=[['Per-trade stop','2% below entry, every position',0,'auto-exit',''],['Daily profit lockout','+10% · '+inr(L.profit*ds),0,inr(Math.max(0,d)),bar(Math.max(0,d),L.profit*ds)],['Global daily loss','3% · '+inr(L.loss*ds),1,inr(Math.max(0,-d)),bar(Math.max(0,-d),L.loss*ds)],['Per-strategy daily loss (automated sources)','1.5% · '+inr(L.stratLoss*ds),1,inr(Math.max(0,-worst))+' worst',bar(Math.max(0,-worst),L.stratLoss*ds)],['Max order value','removed by you, 14 Nov',0,'-',''],['Gross exposure','100% of equity',1,inr(gross()),bar(gross(),L.gross*eq)],['Open instruments',String(L.maxPos),1,String(ps.length),bar(ps.length,L.maxPos)],['Open orders',String(L.maxOrd),1,String(openOrd().length),bar(openOrd().length,L.maxOrd)],['Action rate (orders, cancels, exits)','8 in any rolling second',0,rateNow()+' in last 1s'+(S.queued?', '+S.queued+' queued':''),bar(rateNow(),L.rate)]];
+  $('#risk').innerHTML='<tr><th>Limit</th><th>Value</th><th>Source</th><th>Used now</th><th>Usage</th></tr>'+R.map(r=>'<tr><td class="w">'+r[0]+'</td><td>'+r[1]+'</td><td>'+(r[2]?'<span class="mute">approved by you</span>':'<span class="mute">fixed by you</span>')+'</td><td>'+r[3]+'</td><td>'+(r[4]||'<span class="mute">-</span>')+'</td></tr>').join('');
 }
 
 /* connector: real listings and company relationships (built by tools/build_connector.py) */
@@ -498,23 +539,49 @@ $('#mOk').onclick=()=>{const f=mCb;if(f&&f()===false)return;closeM();render()};
 const FUNDABLE=['INSUFFICIENT_CASH','ORDER_NOTIONAL','GROSS_EXPOSURE'];
 // price shown in tables: average fill price if filled, limit price if resting, otherwise a dash
 const pxCell=o=>o.fp>0?o.fp.toFixed(2):o.px>0?o.px.toFixed(2):'-';
-const qtyTxt=(q,sym)=>{const l=inst(sym).lot||1;return q.toLocaleString('en-IN')+(l>1&&q%l===0?' <span class="mute">('+(q/l)+'L)</span>':'')};
-function tLabel(){const i=inst($('#tSym').value),l=i.lot||1;$('#tQtyL').textContent=l>1?'Lots (1 lot = '+l+' units)':'Quantity'}
-function order(side){
-  const s=$('#tSym').value,type=$('#tType').value,n=Math.floor(+$('#tQty').value),px=+$('#tPx').value,m=$('#tMsg'),l=inst(s).lot||1;
+/* quantities: instruments traded in lots (NIFTY-FUT) show lots; units in the tooltip */
+const qN=(q,sym)=>{const l=inst(sym).lot||1;return l>1&&q%l===0?(q/l).toLocaleString('en-IN')+' L':q.toLocaleString('en-IN')};
+const qtyTxt=(q,sym)=>{const l=inst(sym).lot||1;return l>1&&q%l===0?'<span title="'+q.toLocaleString('en-IN')+' units">'+(q/l).toLocaleString('en-IN')+' L</span>':q.toLocaleString('en-IN')};
+function tLabel(){const i=inst($('#tSym').value),l=i.lot||1,t=i.t||0.05;$('#tQtyL').textContent=l>1?'Lots (1 lot = '+l+' units)':'Quantity';$('#tPx').step=t;quoteFill()}
+/* what a market BUY of this size would get from the simulated book right now */
+let qT=null,QT=null;
+function quoteFill(){clearTimeout(qT);qT=setTimeout(async()=>{const s=$('#tSym').value,i=inst(s),l=i.lot||1,n=Math.floor(+$('#tQty').value),f=$('#tFill');
+  if(!API||!(n>=1)||$('#tType').value!=='MARKET'){f.textContent='';return}
+  try{const r=await(await fetch('api/quote?sym='+encodeURIComponent(s)+'&qty='+n*l,{cache:'no-store'})).json();if(!r.ok){f.textContent='';return}QT=Object.assign({sym:s},r);
+    const full=r.fillable>=r.qty;f.className='note '+(full?'mute':'dn');
+    f.textContent=full?'Book now: fills in full at about avg '+r.avg.toFixed(2)+' (before charges).':'Book now: only '+qN(Math.floor(r.fillable/l)*l,s)+' of '+qN(r.qty,s)+' on offer (avg '+r.avg.toFixed(2)+'). BUY offers to send that much, or the whole order as a split order.'}catch(e){f.textContent=''}},250)}
+function order(side,opt){
+  opt=opt||{};
+  const s=$('#tSym').value,type=$('#tType').value,n=opt.lots||Math.floor(+$('#tQty').value),px=+$('#tPx').value,m=$('#tMsg'),l=inst(s).lot||1;
   if(!API){m.textContent='Engine not running: no orders can be placed.';m.className='note dn';return}
   if(!(n>=1)){m.textContent=l>1?'Enter 1 lot or more.':'Enter a quantity of 1 or more.';m.className='note dn';return}
   if(type==='LIMIT'&&!(px>0)){m.textContent='Enter a limit price for a LIMIT order.';m.className='note dn';return}
-  post('order',{sym:s,side,type,qty:n*l,px:type==='LIMIT'?px:0}).then(r=>{m.innerHTML=r.ok?'Simulated order accepted by the C++ engine.':'Rejected: '+H(r.why)+'.'+(FUNDABLE.includes(r.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':r.code==='KILL_SWITCH'?' <button class="btn sm arm" data-act="rearm">Re-arm</button>':'');m.className='note '+(r.ok?'up':'dn');poll()});
+  const sl=+$('#tSl').value||0,tp=+$('#tTp').value||0;
+  if(side==='SELL'&&(sl||tp)){m.textContent='Stop loss and take profit apply to BUY orders. Set them on an open position with SL/TP.';m.className='note dn';return}
+  if(sl<0||tp<0||sl>2){m.textContent='Stop loss is 0 to 2% (the engine\'s hard stop); take profit above 0%.';m.className='note dn';return}
+  post('order',{sym:s,side,type,qty:n*l,px:type==='LIMIT'?px:0,sl,tp,split:!!opt.split}).then(r=>{
+    let t;
+    if(r.code==='DEPTH'){const can=QT&&QT.sym===s?Math.floor(Math.min(QT.fillable,n*l)/l):0;LASTO={side,n};
+      t='The book offers only '+qN(can*l,s)+' of '+qN(n*l,s)+' right now. '+(can>0?'<button class="btn sm '+(side==='BUY'?'buy':'sell')+'" data-act="sendMax">'+side+' '+qN(can*l,s)+' now</button> ':'')+'<button class="btn sm pri" data-act="sendSplit">Send '+qN(n*l,s)+' as a split order</button>';}
+    else if(!r.ok)t='Rejected: '+H(r.why)+'.'+(FUNDABLE.includes(r.code)?' <button class="btn sm pri" data-act="fund">Fund wallet</button>':r.code==='KILL_SWITCH'?' <button class="btn sm arm" data-act="rearm">Re-arm</button>':'');
+    else if(r.split)t='Split order #'+r.id+' working: '+qN(r.filled,s)+' of '+qN(r.qty,s)+' so far. Slices go out as the simulated book refills (no market-impact model: the book refills at the replay price).';
+    else if(type==='LIMIT'&&r.filled<r.qty)t='Limit order #'+r.id+' working: '+qN(r.filled,s)+' of '+qN(r.qty,s)+' filled so far.';
+    else if(r.filled>=r.qty)t='Filled '+qN(r.filled,s)+' at avg '+r.avg.toFixed(2)+' (order #'+r.id+').';
+    else t='Only '+qN(r.filled,s)+' of '+qN(r.qty,s)+' filled'+(r.filled?' at avg '+r.avg.toFixed(2):'')+': the simulated book had no more offers; the rest was cancelled (order #'+r.id+').';
+    m.innerHTML=t;m.className='note '+(!r.ok?'dn':r.filled<r.qty&&type!=='LIMIT'?'dn':'up');poll();quoteFill()});
 }
-function setMedia(on){$('#v-terminal').classList.toggle('nomedia',!on);$('#mediaBtn').classList.toggle('pri',!on);$('#mediaBtn').textContent=on?'MEDIA ▸':'◂ MEDIA'+(NEWS?' · '+NEWS.items.filter(x=>x.tag==='ADVERSE').length+' ADVERSE':'')}
+function setMedia(on){$('#v-terminal').classList.toggle('nomedia',!on);render()}
 const need=()=>{if(!API){modal('Engine not running','<p>The terminal needs the C++ engine. Start the Codespace (it runs scripts/serve.sh).</p>','OK',()=>{});return false}return true};
 const ACT={
   killOrArm:()=>S.killed?ACT.rearm():ACT.kill(),
   buy:()=>order('BUY'),sell:()=>order('SELL'),mNo:closeM,
   stub:()=>{if(need())post('stub',{on:!stub}).then(poll)},
-  media:()=>setMedia($('#v-terminal').classList.contains('nomedia')),
+  media:()=>{const v=$('#v-terminal');v.classList.remove('alerts');setMedia(v.classList.contains('nomedia'))},
   restart:()=>{if(need())post('restart').then(poll)},
+  sendMax:()=>{if(!LASTO||!QT)return;const l=inst($('#tSym').value).lot||1,can=Math.floor(Math.min(QT.fillable,LASTO.n*l)/l);if(can>0)order(LASTO.side,{lots:can})},
+  sendSplit:()=>{if(!LASTO)return;const s=$('#tSym').value;modal('Send as a split order?','<p>'+H(LASTO.side)+' '+qN(LASTO.n*(inst(s).lot||1),s)+' '+H(s)+' in slices: each slice takes what the simulated book offers, at most 8 actions per second, every slice through the risk checks. It stops if cash or the 100% exposure limit would be exceeded, on KILL, or when you cancel it (✕ in the blotter).</p><p class="mute">The simulated book refills at the replay price, so a large split order does not move the price as it would on NSE. Treat its average price as optimistic.</p>','Send split order',()=>{order(LASTO.side,{split:true})})},
+  alerts:()=>{const v=$('#v-terminal');if(v.classList.contains('alerts')){v.classList.remove('alerts')}else{v.classList.add('alerts','nomedia');markSeen()}render()},
+
   closeSel:()=>{if(!SELL.size||!need())return;const ids=[...SELL];modal('Close '+ids.length+' position(s)?','<p>Each selected position is closed at market by its own sell order. At most 8 actions per second; extra closes wait in the queue.</p>','Close '+ids.length,()=>{post('close',{ids:ids.join(',')}).then(poll);SELL.clear()})},
   kill:()=>{if(need())modal('Activate kill switch?','<p>Blocks every new order at once (yours and the G.R.I.T agent\'s), cancels all open orders, closes every position at market and switches the agent OFF. At most 8 actions per second, so many items take a few seconds. Stays on until you press RE-ARM.</p>','Activate kill switch',()=>{post('kill').then(poll)})},
   cancelAll:()=>{if(need())modal('Cancel all open orders?','<p>'+openOrd().length+' open simulated order(s) will be cancelled (8 per second).</p>','Cancel all orders',()=>{post('cancel_all').then(poll)})},
@@ -532,16 +599,19 @@ function applyState(j){
   if(I.length!==j.inst.length||I.some((x,k)=>x.s!==j.inst[k].s)){I.length=0;j.inst.forEach(x=>I.push(Object.assign({},x)));$('#tSym').innerHTML=I.map(i=>'<option>'+H(i.s)+'</option>').join('');if(S.sel>=I.length)S.sel=0;tLabel()}
   else j.inst.forEach((x,k)=>Object.assign(I[k],x));
   const rp=j.replay||{};RP=rp;
-  $('#wlSrc').textContent=rp.has?(rp.closed?'CLOSED · ':'REPLAY · ')+new Date(rp.date+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short'}).toUpperCase()+' '+mtx(rp.mt):'NO DAY DATA';
+  $('#wlSrc').textContent=rp.has?(rp.closed?'CLOSED ':'')+new Date(rp.date+'T00:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short'}).toUpperCase()+' '+mtx(rp.mt):'NO DAY DATA';
   $('#wlSrc').className='pill '+(rp.has?(rp.closed?'lock':'sim'):'bad');
   $('#wlSrc').title=rp.has?'Replay of NSE trading day '+rp.date+'. Open, high, low and close are the official NSE prices; the order of high and low and all moves between them are simulated. Market time 09:15 to 15:30.':'No NSE day data was loaded: prices are placeholders and do not move.';
   if(document.activeElement!==$('#spd'))$('#spd').value=String(rp.speed);
-  Object.assign(S,{start:j.start,cash:j.cash,dep:j.dep,real:j.real,fees:j.fees,turn:j.turn,killed:j.killed,halt:j.halt?'Daily loss limit hit':'',lock:j.lock,rate:j.rate,rate_max:j.rate_max,queued:j.queued,book:j.book});
+  S.chg=j.chg||{};
+  Object.assign(S,{start:j.start,cash:j.cash,dep:j.dep,real:j.real,fees:j.fees,turn:j.turn,killed:j.killed,halt:j.halt?'Daily loss limit hit':'',lock:j.lock,rate:j.rate,rate_max:j.rate_max,queued:j.queued,book:j.book,day_start:j.day_start,strats:j.strats||[],strat_cap:j.strat_cap||0.015,evseq:j.evseq||0});
+  if(SEEN>S.evseq)SEEN=0;   /* the engine's event ids restarted (demo reset): show everything as new */
   if(!j.lite)S.curve=j.curve;
-  S.orders=j.orders.map(o=>({id:o.id,t:tms(o.ns)!=='-'?tms(o.ns):hms(o.w),ns:o.ns,mt:o.mt,src:o.src,side:o.side,q:o.q,f:o.f,s:o.s,type:o.type,px:o.px||null,fp:o.fp||0,st:o.st,why:o.why,code:o.code,lot:o.lot}));
+  S.orders=j.orders.map(o=>({split:o.split,id:o.id,t:tms(o.ns)!=='-'?tms(o.ns):hms(o.w),ns:o.ns,mt:o.mt,src:o.src,side:o.side,q:o.q,f:o.f,s:o.s,type:o.type,px:o.px||null,fp:o.fp||0,st:o.st,why:o.why,code:o.code,lot:o.lot}));
   S.lots=j.lots||[];
   S.pos={};j.pos.forEach(p=>{S.pos[p.s]={q:p.q,avg:p.avg}});
-  const ev=j.audit.map(e=>({t:hms(e.w),k:e.k,m:e.m}));S.recent=ev;if(!j.lite)S.audit=ev;
+  const ev=j.audit.map(e=>({t:hms(e.w),k:e.k,m:e.m,n:e.n||0}));if(!j.lite)S.audit=ev;
+  S.recent=(j.alerts||[]).map(e=>({t:hms(e.w),k:e.k,m:e.m,n:e.n||0}));if(!j.lite)S.alertsFull=S.recent;
   if(!j.lite)S.ledger=j.ledger.map(e=>({t:hms(e.w),k:e.k,a:e.a,b:e.b}));
   stub=j.stub;
 }
@@ -558,7 +628,7 @@ function renderAgent(){
   const pl=$('#agPill');pl.textContent='G.R.I.T AGENT: '+(a.killed&&!live?'OFF (KILLED)':AGM[a.mode]);pl.className='pill '+(a.mode==='sim'?'ok':a.mode==='shadow'?'sim':'lock');
   $('#agInfo').innerHTML=[['Model','grit-trader v0 · rules from your strategies\' indicators (not trained yet)'],['Next model','grit-trader v1 · trained on the agent\'s logged trades · GPU from 21 Nov'],['Endpoint and key','none needed for v0 (runs inside the engine). A future G.R.I.T endpoint reads GRIT_ENDPOINT / GRIT_API_KEY from secrets, never the repo'],['Stage','1 · historical demo exchange · SIMULATION only']].map(x=>'<tr><td class="mute">'+x[0]+'</td><td class="w">'+H(x[1])+'</td></tr>').join('');
   $('#agModes').innerHTML=['off','shadow','sim'].map(m=>'<button class="btn sm'+(a.mode===m?' pri':'')+'" data-agm="'+m+'" title="'+(m==='off'?'Agent does nothing':m==='shadow'?'Agent decides and logs; no orders are sent':'Agent places simulated orders')+'">'+AGM[m]+(m==='shadow'?' · decides, no orders':m==='sim'?' · demo exchange':'')+'</button>').join('')+'<span class="pill lock">BROKER TEST · locked</span><span class="pill lock">LIVE · locked</span>';
-  $('#agLim').innerHTML='<tr><th>Limit</th><th>Value</th><th>Now</th></tr>'+[['Stop per trade',P(L.stop),'on every position'],['Daily profit lockout','+'+P(L.lock),(U.pnl>=0?'+':'')+P(U.pnl)],['Daily loss',P(L.daily),(U.pnl>=0?'+':'')+P(U.pnl)],['Per-strategy daily loss',P(L.strat),'-'],['Actions per second',L.rate+' hard cap',(S.rate||0)+''],['Gross exposure',P(L.gross)+(L.gross<=1?' (no leverage)':''),P(U.gross)],['Open positions',L.pos,U.pos+' of '+L.pos],['Open orders',L.orders,U.orders+' of '+L.orders]].map(x=>'<tr><td>'+x[0]+'</td><td>'+x[1]+'</td><td>'+x[2]+'</td></tr>').join('');
+  $('#agLim').innerHTML='<tr><th>Limit</th><th>Value</th><th>Now</th></tr>'+[['Stop per trade',P(L.stop),'on every position'],['Daily profit lockout','+'+P(L.lock),(U.pnl>=0?'+':'')+P(U.pnl)],['Daily loss',P(L.daily),(U.pnl>=0?'+':'')+P(U.pnl)],['Per-strategy daily loss',P(L.strat),(()=>{const g=(S.strats||[]).find(x=>x.src==='GRIT-AGENT');return g?(g.halted?'HALTED · ':'')+((g.pnl>=0?'+':'')+P(g.pnl/(S.day_start||1))):'no trades today'})()],['Actions per second',L.rate+' hard cap',(S.rate||0)+''],['Gross exposure',P(L.gross)+(L.gross<=1?' (no leverage)':''),P(U.gross)],['Open positions',L.pos,U.pos+' of '+L.pos],['Open orders',L.orders,U.orders+' of '+L.orders]].map(x=>'<tr><td>'+x[0]+'</td><td>'+x[1]+'</td><td>'+x[2]+'</td></tr>').join('');
   const st=(t,c)=>'<span class="pill '+c+'">'+t+'</span>';
   $('#agIn').innerHTML='<tr><th>Input</th><th>Source</th><th>v0</th></tr>'+[['Strategy indicators','Momentum and mean reversion on 1 year of NSE closes ('+a.hist+' of '+a.n+' instruments have it)',a.hist?st('in use','ok'):st('no history','bad')],['Prices and book','Replay of the last NSE day, demo order book',st('in use','ok')],['Own book','Positions, open orders, limits left',st('in use','ok')],['Headlines','Adverse media feed (NSE filings, GDELT)',st('not used yet','lock')],['Filings','NSE / BSE announcements',st('not used yet','lock')],['Connector links','Company connector graph',st('not used yet','lock')]].map(x=>'<tr><td>'+x[0]+'</td><td class="w mute">'+H(x[1])+'</td><td>'+x[2]+'</td></tr>').join('');
   const aC=t=>t==='BUY'?'ok':t==='CLOSE'?'sim':t==='MOVE EXIT'?'sim':t==='STOP'?'bad':'lock',rC=t=>t==='PASS'?'ok':t.indexOf('VETO')===0?'bad':'lock';
@@ -570,7 +640,10 @@ function renderAgent(){
   $('#agTrain').innerHTML=[['Lines logged',s2.logged+' (decisions and closed trades)'],['Each line holds','state, action, reason, risk verdict; closed trades add P&L and who closed'],['File','data/agent/decisions.jsonl in the Codespace; never committed (data/ is ignored)'],['Training run','GPU from 21 Nov, then nightly']].map(x=>'<tr><td class="mute">'+x[0]+'</td><td class="w">'+H(x[1])+'</td></tr>').join('');
 }
 /* fast poll: prices, book, positions every 0.5 s; full state (history, ledger, curve) every 3 s */
-let fails=0,pc=0,busy=false;
+let fails=0,pc=0,busy=false,SEEN=0,OPENSEEN=0,LASTO=null;
+/* alerts are "checked" when the alerts panel is open; rows newer than the moment it was opened stay highlighted */
+function markSeen(){OPENSEEN=SEEN;SEEN=Math.max(SEEN,S.evseq||0);try{localStorage.setItem('mc_seen',String(SEEN))}catch(e){}}
+try{SEEN=+(localStorage.getItem('mc_seen')||0)}catch(e){}
 async function poll(){
   if(busy)return;busy=true;
   try{const full=(pc++%6===0),r=await fetch('api/state?sel='+S.sel+(full?'':'&lite=1'),{cache:'no-store'});const j=await r.json();if(j.engine!=='cpp')throw 0;applyState(j);fails=0}
@@ -580,17 +653,22 @@ async function poll(){
 async function initApi(){
   try{const r=await fetch('api/state',{cache:'no-store'});if(!r.ok)return;const j=await r.json();if(j.engine!=='cpp')return;
     API=true;applyState(j);
-    render();setInterval(poll,500);pollAgent();setInterval(pollAgent,1000)}catch(e){render()}
+    render();setInterval(poll,500);pollAgent();setInterval(()=>{if(location.hash==='#engine'||Date.now()%3000<1000)pollAgent()},1000);tLabel()}catch(e){render()}
 }
 document.addEventListener('click',e=>{
   if(e.target.id==='ckAll'){(S.lots||[]).forEach(l=>{if(!l.c){if(e.target.checked)SELL.add(l.id);else SELL.delete(l.id)}});render();return}
-  const t=e.target.closest('[data-agm],[data-act],[data-sel],[data-cx],[data-close],[data-ck],[data-amt],[data-node],[data-open],[data-flt]');if(!t)return;
+  const t=e.target.closest('[data-agm],[data-act],[data-sel],[data-cx],[data-close],[data-exits],[data-ck],[data-amt],[data-node],[data-open],[data-flt]');if(!t)return;
   const d=t.dataset;
   if(d.agm)setAgent(d.agm);
   else if(d.act)ACT[d.act]();
   else if(d.sel){S.sel=+d.sel;$('#tSym').value=I[S.sel].s;render();if(API)poll()}
   else if(d.cx&&API){post('cancel',{id:d.cx}).then(poll)}
   else if(d.close&&API){post('close',{ids:d.close}).then(poll)}
+  else if(d.exits&&API){const l=(S.lots||[]).find(x=>x.id===d.exits);if(!l)return;const i=inst(l.s),hs=l.e*(1-L.stop);
+    const upd=()=>{const a=+$('#eSl').value||0,b=+$('#eTp').value||0;$('#ePx').textContent='Stop loss at '+(a>0?(l.e*(1-a/100)).toFixed(2):'none')+' · take profit at '+(b>0?(l.e*(1+b/100)).toFixed(2):'none')};
+    modal('Stop loss / take profit · #'+l.id.slice(4)+' '+l.s,'<p class="mute">Entry '+l.e.toFixed(2)+' · last '+i.p.toFixed(2)+'. In % of the entry price; leave empty for none. The engine\'s 2% stop at '+hs.toFixed(2)+' always applies, so a stop loss can be at most 2%.</p><div class="g4"><label class="f">Stop loss % (max 2)<input id="eSl" type="number" step="0.1" min="0" max="2" value="'+(l.sl||'')+'"></label><label class="f">Take profit %<input id="eTp" type="number" step="0.1" min="0" value="'+(l.tp||'')+'"></label></div><p class="note" id="ePx"></p>','Save',
+      ()=>{post('exits',{id:l.id,sl:+$('#eSl').value||0,tp:+$('#eTp').value||0}).then(poll)});
+    upd();$('#eSl').oninput=upd;$('#eTp').oninput=upd}
   else if(d.ck){if(t.checked)SELL.add(d.ck);else SELL.delete(d.ck);render()}
   else if(d.amt){$('#fAmt').value=d.amt}
   else if(d.node!==undefined){C.pick=+d.node;renderWeb()}
@@ -646,7 +724,8 @@ async function loadTv(){
 }
 $('#chan').addEventListener('change',e=>playTv(e.target.value));
 loadTv();
-$('#tSym').addEventListener('change',tLabel);
+$('#tSym').addEventListener('change',()=>{const k=I.findIndex(i=>i.s===$('#tSym').value);if(k>=0){S.sel=k;if(API)poll()}tLabel()});
+['#tQty','#tType'].forEach(x=>$(x).addEventListener('input',quoteFill));
 $('#spd').addEventListener('change',e=>{if(need())post('speed',{x:e.target.value}).then(poll)});
 /* adverse media: shown on load, hidden after 8 seconds; the MEDIA button opens it again. Hidden != stopped. */
 setTimeout(()=>setMedia(false),8000);

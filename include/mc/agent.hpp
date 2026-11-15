@@ -129,7 +129,7 @@ class Agent {
 
   std::string json(const LiveSim& sim) const {
     std::ostringstream o;
-    o.precision(10);
+    o.precision(15);
     const RiskLimits& L = sim.limits();
     const double eq = sim.equity(), base = sim.base();
     double unreal = 0; int open = 0;
@@ -285,7 +285,9 @@ class Agent {
     const Qty lot = sim.lot_size(best);
     const double each = px * static_cast<double>(lot);
     Qty lots = each > 0 ? static_cast<Qty>(std::floor(sim.equity() * kSizeShare / each)) : 0;
-    if (lots < 1) lots = 1;
+    const Qty book_lots = sim.ask_depth(best) / lot;   // never more than the visible offers: no partial fills by design
+    if (lots > book_lots) lots = book_lots;
+    if (lots < 1) return false;
     const Qty q = lots * lot;
     const std::string stop = f2(px * (1 - sim.limits().stop_pct)), tgt = f2(px * (1 + kTarget));
     Pos p; p.inst = best; p.qty = p.q0 = q; p.entry = px; p.peak = px; p.mt = mt; p.why = best_why;

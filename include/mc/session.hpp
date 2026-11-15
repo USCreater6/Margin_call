@@ -15,11 +15,14 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <map>
+#include <utility>
 #include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "mc/charges.hpp"
 #include "mc/exchange.hpp"
 #include "mc/order_book.hpp"
 #include "mc/osm.hpp"
@@ -35,16 +38,24 @@ class LiveSim {
 
   struct Rec { Order o; std::string src, why, code; double fill_val = 0; std::int64_t wall = 0, ns = 0; double mt = -1;
     OrderId lot = 0;   // for an exit: the position lot it closes
+    double sl = 0, tp = 0;   // BUY only: stop loss / take profit in % of the entry price (0 = none), given to the lot it opens
+    bool split = false;      // a split order: the engine sends it in slices as the book refills
+    OrderId parent = 0;      // a slice of split order `parent`
     double avg_fill() const { return o.filled > 0 ? fill_val / static_cast<double>(o.filled) : 0.0; } };
-  struct Evt { std::int64_t wall; std::string k, m; };
+  struct Evt { std::int64_t wall; std::string k, m; long seq = 0; };   // seq: increasing id (alerts "seen" marker)
   struct Led { std::int64_t wall; std::string k; double a, b; };
   struct Lot { OrderId id = 0; std::uint32_t inst = 0; Qty qty = 0; double cost = 0, entry = 0, realized = 0, mt = -1;
-    std::int64_t ns = 0; bool closing = false; std::string closer; };
+    std::int64_t ns = 0; bool closing = false; std::string closer;
+    double sl = 0, tp = 0;      // owner's stop loss / take profit for this position, % of entry (0 = none)
+    std::int64_t day = 0;       // IST day it was bought (intraday vs delivery charges)
+    bool dlv = false;           // carried past its day: delivery charges applied
+    double sl_px() const { return sl > 0 ? entry * (1.0 - sl / 100.0) : 0.0; }
+    double tp_px() const { return tp > 0 ? entry * (1.0 + tp / 100.0) : 0.0; } };
   // One real trading day (rupee prices in paise). vol_units = traded quantity in units; 0 = not verified.
   struct Day { std::string date; Price o = 0, h = 0, l = 0, c = 0, pc = 0; double vol_units = 0; std::string vol_note; };
 
-  LiveSim(double capital, const RiskLimits& lim, std::uint64_t seed, double fee_bps = 3.0)
-      : capital_(capital), lim_(lim), fee_bps_(fee_bps), rng_(seed), pf_(capital, 1), risk_(lim) {
+  LiveSim(double capital, const RiskLimits& lim, std::uint64_t seed)
+      : capital_(capital), lim_(lim), rng_(seed), pf_(capital, 1), risk_(lim) {
     risk_.start_day(capital);
     ledger_.push_back({0, "OPENING DEMO BALANCE", capital, capital});
   }
@@ -57,6 +68,8 @@ class LiveSim {
     marks_.push_back(px);
     quote(inst_.size() - 1);
   }
+  // Market segment decides the statutory charges (include/mc/charges.hpp).
+  void set_segment(std::size_t i, Seg s) { if (i < inst_.size()) inst_[i].seg = s; }
   // Attaches a real trading day to instrument i: builds its replay path and moves the price to the day's open.
   bool set_day(std::size_t i, const Day& d) {
     if (i >= inst_.size() || d.o <= 0 || d.h <= 0 || d.l <= 0 || d.c <= 0 || d.l > d.h) return false;
@@ -92,7 +105,20 @@ class LiveSim {
     if (ledger_.size() == 1 && ledger_[0].wall == 0) ledger_[0].wall = wall_;
     const std::int64_t day = (wall_ + 19800000LL) / 86400000LL;   // IST = UTC+05:30
     if (day_ != 0 && day != day_) {
+      // equity bought on an earlier day and still held becomes delivery: buy-side STT and the stamp-duty difference
+      int carried = 0;
+      for (Lot& l : lots_) {
+        if (l.qty <= 0 || l.dlv || l.day == day || inst_[l.inst].seg == Seg::IndexFuture) continue;
+        const double v = l.entry * static_cast<double>(l.qty);
+        Charges c;
+        c.stt = inst_[l.inst].seg == Seg::Stock ? v * rates_.stt_deliv : 0.0;
+        c.stamp = v * (rates_.stamp_deliv - rates_.stamp_intra);
+        pf_.deposit(-c.total()); add_charges(orders_[l.id - 1].src, c);
+        l.dlv = true; ++carried;
+      }
+      if (carried) log("DELIVERY", std::to_string(carried) + " equity position(s) carried overnight: delivery STT and stamp duty charged");
       risk_.start_day(equity());
+      strat_.clear();
       log("NEW DAY", "New trading day: daily loss and profit limits measured from current equity");
     }
     day_ = day;
@@ -109,13 +135,26 @@ class LiveSim {
   std::string restart_replay() {
     if (!has_replay_) return "No trading-day data loaded";
     if (pf_.open_positions() > 0 || live_ > 0 || !q_.empty() || !later_.empty()) return "Close all positions and orders first (Flatten all)";
-    mt_ = 0; closed_ = false; last_step_ = 0;
+    mt_ = 0; closed_ = false; stepped_ = false;
     for (std::size_t i = 0; i < inst_.size(); ++i) if (inst_[i].has_day) { inst_[i].px = inst_[i].path[0]; marks_[i] = inst_[i].px; quote(i); }
     log("REPLAY", "Replay of " + replay_date_ + " restarted at 09:15. Daily loss and profit limits are not reset by a restart.");
     return "";
   }
 
   double equity() const { return pf_.equity(marks_); }
+  double day_start() const { return risk_.day_start(); }
+  const Charges& charges() const { return chg_; }
+  // Buy-side statutory charges per rupee (intraday rates: what a buy pays when it fills).
+  double buy_rate(std::size_t i) const { return nse_charges(rates_, inst_[i].seg, Side::Buy, 1.0, false).total(); }
+  bool strategy_halted(const std::string& src) const { auto it = strat_.find(src); return it != strat_.end() && it->second.halted; }
+  // What a market buy of `qty` would get right now from the visible book: filled quantity and average price.
+  std::pair<Qty, double> fillable_buy(std::size_t i, Qty qty) const {
+    double cost = 0; Qty left = qty;
+    inst_[i].book.levels(Side::Sell, 1 << 20, [&](Price p, Qty q) { if (left > 0) { const Qty a = std::min(left, q); cost += rupees(p) * static_cast<double>(a); left -= a; } });
+    const Qty got = qty - left;
+    return {got, got > 0 ? cost / static_cast<double>(got) : 0.0};
+  }
+  Qty ask_depth(std::size_t i) const { Qty d = 0; inst_[i].book.levels(Side::Sell, 1 << 20, [&](Price, Qty q) { d += q; }); return d; }
   double base() const { return capital_ + dep_; }
   double cash() const { return pf_.cash(); }
   Position position(std::size_t i) const { return pf_.pos(0, static_cast<std::uint32_t>(i)); }
@@ -146,20 +185,36 @@ class LiveSim {
   int open_positions() const { return pf_.open_positions(); }
 
   // A new order from the ticket or the stub. Returns an empty string if accepted, otherwise the veto reason.
-  std::string submit(std::size_t i, Side side, OrdType type, Qty qty, Price px, const std::string& src, Ts now) {
+  // sl / tp: % of the entry price (0 = none), BUY only: the position this order opens closes at market when the
+  // last price falls sl% below / rises tp% above its entry. The engine's 2% per-trade stop always applies, so a
+  // stop loss can be at most 2%.
+  // A MARKET order larger than what the book offers right now is refused (it says how much is on offer);
+  // with split = true it is accepted and the engine sends it in slices as the book refills.
+  std::string submit(std::size_t i, Side side, OrdType type, Qty qty, Price px, const std::string& src, Ts now, double sl = 0, double tp = 0,
+                     bool split = false) {
     Inst& in = inst_[i];
     Rec r;
     r.o.id = orders_.size() + 1; r.o.inst = static_cast<std::uint32_t>(i); r.o.side = side; r.o.type = type;
     r.o.px = type == OrdType::Limit ? px : 0; r.o.qty = qty; r.src = src; r.wall = wall_; r.ns = wall_ns_; r.mt = has_replay_ ? mt_ : -1;
+    r.sl = sl > 0 ? sl : 0; r.tp = tp > 0 ? tp : 0; r.split = split;
     adv(r.o, Ev::Submit);
     std::string why;
+    const Qty offered = type != OrdType::Market ? 0 : side == Side::Buy ? fillable_buy(i, qty).first : std::min(qty, bid_depth(i));
     if (type == OrdType::Stop) why = "Stop orders are not available in the terminal yet";
+    else if (split && type != OrdType::Market) why = "Only MARKET orders can be split";
+    else if ((r.sl > 0 || r.tp > 0) && side != Side::Buy) why = "Stop loss and take profit apply to buy orders (the position they open)";
+    else if (sl < 0 || tp < 0 || (r.sl > 0 && r.sl > lim_.stop_pct * 100 + 1e-9)) { why = "Stop loss must be between 0% and " + fmt(lim_.stop_pct * 100) + "% (the engine's hard stop)"; r.code = "BAD_EXIT"; }
+    else if (r.tp > 100) { why = "Take profit can be at most 100%"; r.code = "BAD_EXIT"; }
     else if (qty <= 0 || qty % in.lot != 0) { why = "Quantity must be whole lots of " + std::to_string(in.lot); r.code = "LOT_SIZE"; }
     else if (type == OrdType::Limit && (px <= 0 || px % in.tick != 0)) why = "Limit price must be a positive multiple of the tick size";
     else if (risk_.killed()) { why = human(Reject::Killed); r.code = to_string(Reject::Killed); }
     else if (closed_) { why = "Market closed: the replay of " + replay_date_ + " ended at 15:30. Restart the replay."; r.code = "MARKET_CLOSED"; }
     else if (!q_.empty() || !later_.empty()) { why = "Exits and cancels are being sent (8 per second). Try again in a moment."; r.code = "QUEUE_BUSY"; }
     else if (self_cross(i, side, type, px)) { why = "Self-trade prevention: it would match your own resting order"; r.code = "SELF_TRADE"; }
+    else if (type == OrdType::Market && !split && offered < qty) {
+      why = "The book offers only " + std::to_string(offered) + " of " + std::to_string(qty) + " now. Send at most " + std::to_string((offered / in.lot) * in.lot) + ", or send it as a split order";
+      r.code = "DEPTH";
+    }
     else {
       RiskCtx c;
       c.equity = equity(); c.gross = pf_.gross(marks_); c.open_orders = live_; c.positions = pf_.open_positions();
@@ -171,16 +226,17 @@ class LiveSim {
         in.book.levels(Side::Sell, 1 << 20, [&](Price p, Qty q) { if (left > 0) { const Qty a = std::min(left, q); cost += rupees(p) * static_cast<double>(a); left -= a; } });
         if (qty > left) c.ref_px = std::max(c.ref_px, cost / static_cast<double>(qty - left));
       }
-      if (side == Side::Buy) c.ref_px *= 1.0 + fee_bps_ / 1e4;
+      if (side == Side::Buy) c.ref_px *= 1.0 + buy_rate(i);
       c.cash = pf_.cash();
       c.long_only = true;
       for (const Rec& q : orders_) {
         if (!is_live(q.o.st)) continue;
         const Qty rem = q.o.qty - q.o.filled;
         if (q.o.side == Side::Sell && q.o.inst == i) c.pending_sell_qty += rem;
-        if (q.o.side == Side::Buy) c.pending_buy_notional += rupees(q.o.px) * static_cast<double>(rem) * (1.0 + fee_bps_ / 1e4);
+        if (q.o.side == Side::Buy) c.pending_buy_notional += rupees(q.o.px) * static_cast<double>(rem) * (1.0 + buy_rate(q.o.inst));
       }
       for (const Lot& l : lots_) if (l.closing && l.inst == i) c.pending_sell_qty += l.qty;   // queued exits are sells too
+      c.strat_halted = strategy_halted(src);   // per-strategy daily loss (automated sources; see update_strategies)
       const Reject rj = risk_.check(r.o, c, now);
       why = human(rj);
       if (rj != Reject::None) r.code = to_string(rj);
@@ -193,6 +249,13 @@ class LiveSim {
       return why;
     }
     stamps_.push_back(now);
+    if (split) {   // a parent: it stays open while slices go out (work_splits)
+      adv(r.o, Ev::RiskPass); adv(r.o, Ev::VenueAck);
+      orders_.push_back(r); ++live_;
+      log("SPLIT", tag(r.o.id) + " " + to_string(side) + " " + std::to_string(qty) + " " + in.sym + ": split order accepted, sent in slices as the book refills");
+      work_splits(now);
+      return "";
+    }
     send(r, now);
     return "";
   }
@@ -217,6 +280,21 @@ class LiveSim {
     if (n) log("CLOSE", std::to_string(n) + " position lot(s) queued to close at market");
     pump(now);
     return n;
+  }
+  // Sets or clears (0) the stop loss / take profit of an open position lot, in % of its entry price.
+  // A level the last price has already passed closes the position on the next tick.
+  std::string set_exits(OrderId id, double sl, double tp) {
+    Lot* l = find_lot(id);
+    if (!l || l->qty <= 0) return "Position is not open";
+    if (l->closing) return "Position is already closing";
+    if (sl < 0 || tp < 0) return "Percentages cannot be negative";
+    if (sl > lim_.stop_pct * 100 + 1e-9) return "Stop loss can be at most " + fmt(lim_.stop_pct * 100) + "% (the engine's hard stop)";
+    if (tp > 100) return "Take profit can be at most 100%";
+    l->sl = sl; l->tp = tp;
+    const Inst& in = inst_[l->inst];
+    log("EXITS SET", "Position " + tag(id) + " " + in.sym + ": stop loss " + (sl > 0 ? fmt(sl) + "% (" + fmt(l->sl_px()) + ")" : "none") +
+                         ", take profit " + (tp > 0 ? fmt(tp) + "% (" + fmt(l->tp_px()) + ")" : "none"));
+    return "";
   }
   void flatten(Ts now) {
     int c = 0, p = 0;
@@ -258,8 +336,8 @@ class LiveSim {
     for (auto& in : inst_) in.book.clear();
     orders_.clear(); events_.clear(); ledger_.clear(); curve_.clear(); stamps_.clear(); lots_.clear(); q_.clear(); later_.clear();
     pf_ = Portfolio(capital_, 1); risk_ = RiskEngine(lim_); risk_.start_day(capital_);
-    dep_ = fees_ = turn_ = real_ = 0; live_ = 0; stub_ = false; kill_pending_ = flatten_pending_ = false;
-    mt_ = 0; closed_ = false; last_step_ = 0;
+    dep_ = fees_ = turn_ = real_ = 0; live_ = 0; stub_ = false; kill_pending_ = flatten_pending_ = false; strat_.clear(); chg_ = Charges{};
+    mt_ = 0; closed_ = false; stepped_ = false;
     for (std::size_t i = 0; i < inst_.size(); ++i) { inst_[i].px = inst_[i].has_day ? inst_[i].path[0] : inst_[i].start; marks_[i] = inst_[i].px; }
     ledger_.push_back({wall_, "OPENING DEMO BALANCE", capital_, capital_});
     for (std::size_t i = 0; i < inst_.size(); ++i) quote(i);
@@ -278,13 +356,14 @@ class LiveSim {
       if (a.close) exec_close(a, now); else do_cancel(a.id, a.src);
     }
     if (q_.empty() && later_.empty()) finish_pending(now);
+    work_splits(now);
   }
 
   // One market tick: advances the replay clock by speed x elapsed seconds (move=false keeps prices: test hook).
   void step(Ts now, bool move = true) {
     ++ticks_;
-    const double dt = last_step_ ? static_cast<double>(now - last_step_) * 1e-9 : 1.0;
-    last_step_ = now;
+    const double dt = stepped_ ? static_cast<double>(now - last_step_) * 1e-9 : 0.0;   // the first step only starts the clock
+    last_step_ = now; stepped_ = true;
     if (move && has_replay_ && !closed_ && speed_ > 0) {
       mt_ = std::min<double>(kSession, mt_ + dt * speed_);
       for (auto& in : inst_) if (in.has_day) in.px = path_at(in, mt_);
@@ -296,13 +375,21 @@ class LiveSim {
     for (std::size_t i = 0; i < inst_.size(); ++i) { marks_[i] = inst_[i].px; quote(i); }
     for (Act& a : later_) q_.push_back(a);   // exits that waited for fresh depth
     later_.clear();
-    for (const Lot& l : lots_) {              // 2% per-trade stop, per position lot
+    for (const Lot& l : lots_) {              // exits per position lot: hard 2% stop, then the owner's stop loss / take profit
       if (l.qty <= 0 || l.closing) continue;
-      if (rupees(inst_[l.inst].px) <= l.entry * (1.0 - lim_.stop_pct)) {
-        log("STOP", "2% per-trade stop hit on " + inst_[l.inst].sym + " lot " + tag(l.id) + " (entry " + fmt(l.entry) + ")");
+      const double last = rupees(inst_[l.inst].px);
+      if (last <= l.entry * (1.0 - lim_.stop_pct)) {
+        log("STOP", "2% per-trade stop hit on " + inst_[l.inst].sym + " lot " + tag(l.id) + " (entry " + fmt(l.entry) + ", last " + fmt(last) + ")");
         queue_close(l.id, "STOP");
+      } else if (l.sl > 0 && last <= l.sl_px()) {
+        log("STOP LOSS", "Stop loss " + fmt(l.sl) + "% (" + fmt(l.sl_px()) + ") reached on " + inst_[l.inst].sym + " lot " + tag(l.id) + " (last " + fmt(last) + ")");
+        queue_close(l.id, "STOP LOSS");
+      } else if (l.tp > 0 && last >= l.tp_px()) {
+        log("TAKE PROFIT", "Take profit " + fmt(l.tp) + "% (" + fmt(l.tp_px()) + ") reached on " + inst_[l.inst].sym + " lot " + tag(l.id) + " (last " + fmt(last) + ")");
+        queue_close(l.id, "TAKE PROFIT");
       }
     }
+    update_strategies(now);
     const bool was_h = risk_.halted(), was_l = risk_.locked();
     risk_.on_equity(equity());
     if (!was_h && risk_.halted()) {
@@ -320,7 +407,7 @@ class LiveSim {
     }
     if (now >= next_curve_) {   // one point per second
       next_curve_ = now + 1000000000LL;
-      curve_.push_back(equity() - base());
+      curve_.push_back(equity() - risk_.day_start());   // day P&L: same basis as the header
       if (curve_.size() > 900) curve_.erase(curve_.begin());
     }
     prune(now);
@@ -334,19 +421,21 @@ class LiveSim {
     auto cl = [](const std::string& x) { std::string r = x; for (char& c : r) if (c == '\t' || c == '\n' || c == '\r') c = ' '; return r; };
     o << "MCSNAP\t1\n";
     o << "A\t" << capital_ << "\t" << dep_ << "\t" << fees_ << "\t" << turn_ << "\t" << real_ << "\t" << pf_.cash() << "\t" << pf_.realized(0) << "\t" << pf_.fees(0) << "\n";
+    o << "F\t" << chg_.stt << "\t" << chg_.txn << "\t" << chg_.sebi << "\t" << chg_.stamp << "\t" << chg_.gst << "\t" << chg_.brokerage << "\n";
     o << "R\t" << risk_.killed() << "\t" << risk_.halted() << "\t" << risk_.locked() << "\t" << risk_.day_start() << "\t" << day_ << "\n";
     o << "C\t" << cl(replay_date_.empty() ? "-" : replay_date_) << "\t" << mt_ << "\t" << speed_ << "\t" << closed_ << "\t" << kill_pending_ << "\t" << flatten_pending_ << "\n";
     for (const Inst& in : inst_) o << "I\t" << cl(in.sym) << "\t" << cl(in.venue) << "\t" << in.px << "\t" << in.tick << "\t" << in.lot << "\n";
     for (std::size_t i = 0; i < inst_.size(); ++i) { const Position p = position(i); if (p.qty) o << "P\t" << cl(inst_[i].sym) << "\t" << p.qty << "\t" << p.avg << "\n"; }
     for (const Lot& l : lots_)
       o << "L\t" << l.id << "\t" << cl(inst_[l.inst].sym) << "\t" << l.qty << "\t" << l.cost << "\t" << l.entry << "\t" << l.realized << "\t" << l.mt << "\t" << l.ns
-        << "\t" << l.closing << "\t" << cl(l.closer.empty() ? "-" : l.closer) << "\n";
+        << "\t" << l.closing << "\t" << cl(l.closer.empty() ? "-" : l.closer) << "\t" << l.sl << "\t" << l.tp << "\t" << l.day << "\t" << l.dlv << "\n";
     for (const Rec& r : orders_)
       o << "O\t" << r.o.id << "\t" << cl(inst_[r.o.inst].sym) << "\t" << static_cast<int>(r.o.side) << "\t" << static_cast<int>(r.o.type) << "\t" << r.o.px << "\t" << r.o.qty
         << "\t" << r.o.filled << "\t" << static_cast<int>(r.o.st) << "\t" << cl(r.src.empty() ? "-" : r.src) << "\t" << cl(r.why.empty() ? "-" : r.why) << "\t" << cl(r.code.empty() ? "-" : r.code)
-        << "\t" << r.fill_val << "\t" << r.wall << "\t" << r.ns << "\t" << r.mt << "\t" << r.lot << "\n";
+        << "\t" << r.fill_val << "\t" << r.wall << "\t" << r.ns << "\t" << r.mt << "\t" << r.lot << "\t" << r.sl << "\t" << r.tp << "\t" << r.split << "\t" << r.parent << "\n";
     const std::size_t ef = events_.size() > 300 ? events_.size() - 300 : 0;
-    for (std::size_t k = ef; k < events_.size(); ++k) o << "E\t" << events_[k].wall << "\t" << cl(events_[k].k) << "\t" << cl(events_[k].m.empty() ? "-" : events_[k].m) << "\n";
+    for (std::size_t k = ef; k < events_.size(); ++k) o << "E\t" << events_[k].wall << "\t" << cl(events_[k].k) << "\t" << cl(events_[k].m.empty() ? "-" : events_[k].m) << "\t" << events_[k].seq << "\n";
+    for (const auto& [src, st] : strat_) o << "S\t" << cl(src.empty() ? "-" : src) << "\t" << st.real << "\t" << st.fees << "\t" << st.halted << "\n";
     for (const Led& g : ledger_) o << "G\t" << g.wall << "\t" << cl(g.k) << "\t" << g.a << "\t" << g.b << "\n";
     o << "V";
     for (double v : curve_) o << "\t" << v;
@@ -376,35 +465,46 @@ class LiveSim {
       bool rk = false, rh = false, rl = false; double rds = 0; std::int64_t dday = 0;
       std::vector<std::pair<std::uint32_t, Position>> pos;
       std::vector<Lot> lots; std::vector<Rec> ords; std::vector<Evt> evs; std::vector<Led> led; std::vector<double> crv;
+      std::map<std::string, St> strats; bool hasA = false, hasR = false, hasC = false, hasF = false; Charges chg;
       double cap = capital_, dep = 0, fees = 0, turn = 0, real = 0;
       for (const auto& f : rows) {
         const std::string& t = f[0];
-        if (t == "A" && f.size() >= 9) { cap = D(f[1]); dep = D(f[2]); fees = D(f[3]); turn = D(f[4]); real = D(f[5]); cash = D(f[6]); pfr = D(f[7]); pff = D(f[8]); }
-        else if (t == "R" && f.size() >= 6) { rk = f[1] == "1"; rh = f[2] == "1"; rl = f[3] == "1"; rds = D(f[4]); dday = L(f[5]); }
-        else if (t == "C" && f.size() >= 7) { date = S(f[1]); mt = D(f[2]); spd = D(f[3]); cls = f[4] == "1"; kp = f[5] == "1"; fp = f[6] == "1"; }
+        if (t == "A" && f.size() >= 9) { hasA = true; cap = D(f[1]); dep = D(f[2]); fees = D(f[3]); turn = D(f[4]); real = D(f[5]); cash = D(f[6]); pfr = D(f[7]); pff = D(f[8]); }
+        else if (t == "R" && f.size() >= 6) { hasR = true; rk = f[1] == "1"; rh = f[2] == "1"; rl = f[3] == "1"; rds = D(f[4]); dday = L(f[5]); }
+        else if (t == "C" && f.size() >= 7) { hasC = true; date = S(f[1]); mt = D(f[2]); spd = D(f[3]); cls = f[4] == "1"; kp = f[5] == "1"; fp = f[6] == "1"; }
         else if (t == "P" && f.size() >= 4) { Position p; p.qty = L(f[2]); p.avg = D(f[3]); pos.push_back({idx(f[1]), p}); }
         else if (t == "L" && f.size() >= 11) {
           Lot l; l.id = static_cast<OrderId>(L(f[1])); l.inst = idx(f[2]); l.qty = L(f[3]); l.cost = D(f[4]); l.entry = D(f[5]); l.realized = D(f[6]);
-          l.mt = D(f[7]); l.ns = L(f[8]); l.closing = f[9] == "1"; l.closer = S(f[10]); lots.push_back(l);
+          l.mt = D(f[7]); l.ns = L(f[8]); l.closing = f[9] == "1"; l.closer = S(f[10]);
+          if (f.size() >= 13) { l.sl = D(f[11]); l.tp = D(f[12]); }
+          if (f.size() >= 15) { l.day = L(f[13]); l.dlv = f[14] == "1"; }
+          lots.push_back(l);
         } else if (t == "O" && f.size() >= 17) {
           Rec r; r.o.id = static_cast<OrderId>(L(f[1])); r.o.inst = idx(f[2]); r.o.side = static_cast<Side>(L(f[3])); r.o.type = static_cast<OrdType>(L(f[4]));
           r.o.px = L(f[5]); r.o.qty = L(f[6]); r.o.filled = L(f[7]); r.o.st = static_cast<State>(L(f[8])); r.src = S(f[9]); r.why = S(f[10]); r.code = S(f[11]);
           r.fill_val = D(f[12]); r.wall = L(f[13]); r.ns = L(f[14]); r.mt = D(f[15]); r.lot = static_cast<OrderId>(L(f[16]));
+          if (f.size() >= 19) { r.sl = D(f[17]); r.tp = D(f[18]); }
+          if (f.size() >= 21) { r.split = f[19] == "1"; r.parent = static_cast<OrderId>(L(f[20])); }
           if (r.o.id != ords.size() + 1) throw std::runtime_error("order ids out of sequence");
           ords.push_back(r);
-        } else if (t == "E" && f.size() >= 4) evs.push_back({L(f[1]), f[2], S(f[3])});
+        } else if (t == "E" && f.size() >= 4) evs.push_back({L(f[1]), f[2], S(f[3]), f.size() >= 5 ? static_cast<long>(L(f[4])) : 0});
+        else if (t == "F" && f.size() >= 7) { chg.stt = D(f[1]); chg.txn = D(f[2]); chg.sebi = D(f[3]); chg.stamp = D(f[4]); chg.gst = D(f[5]); chg.brokerage = D(f[6]); hasF = true; }
+        else if (t == "S" && f.size() >= 5) { St st; st.real = D(f[2]); st.fees = D(f[3]); st.halted = f[4] == "1"; strats[S(f[1])] = st; }
         else if (t == "G" && f.size() >= 5) led.push_back({L(f[1]), f[2], D(f[3]), D(f[4])});
         else if (t == "V") for (std::size_t k = 1; k < f.size(); ++k) crv.push_back(D(f[k]));
       }
+      if (!hasA || !hasR || !hasC) throw std::runtime_error("account, risk or clock line missing");
       for (const Lot& l : lots) if (l.id == 0 || l.id > ords.size()) throw std::runtime_error("lot without its order");
       // all parsed: apply
       for (auto& in : inst_) in.book.clear();
       capital_ = cap; dep_ = dep; fees_ = fees; turn_ = turn; real_ = real;
+      if (hasF) chg_ = chg; else { chg_ = Charges{}; chg_.brokerage = fees; }   // older file: one placeholder total
       pf_.restore(cash, pfr, pff, pos);
       risk_ = RiskEngine(lim_); risk_.restore(rk, rh, rl, rds);
       if (dday) day_ = dday;
-      orders_ = ords; lots_ = lots; events_ = evs; ledger_ = led; curve_ = crv;
-      q_.clear(); later_.clear(); stamps_.clear(); stub_ = false; last_step_ = 0;
+      orders_ = ords; lots_ = lots; events_ = evs; ledger_ = led; curve_ = crv; strat_ = strats;
+      ev_seq_ = 0; for (Evt& e : events_) { if (e.seq <= ev_seq_) e.seq = ev_seq_ + 1; ev_seq_ = e.seq; }
+      q_.clear(); later_.clear(); stamps_.clear(); stub_ = false; stepped_ = false;
       kill_pending_ = kp; flatten_pending_ = fp;
       const bool same_day = has_replay_ && date == replay_date_;
       if (same_day) { mt_ = std::min<double>(mt, kSession); closed_ = cls; } else { mt_ = 0; closed_ = false; }
@@ -430,18 +530,21 @@ class LiveSim {
     prune(now);
     if (sel >= inst_.size()) sel = 0;
     std::ostringstream o;
-    o.precision(12);
+    o.precision(15);   // 12 digits rounded cash on a 9,800 crore account to 0.1 rupee
     o << "{\"engine\":\"cpp\",\"label\":\"SIMULATION\",\"start\":" << capital_ << ",\"cash\":" << pf_.cash() << ",\"dep\":" << dep_
       << ",\"real\":" << real_ << ",\"fees\":" << fees_ << ",\"turn\":" << turn_ << ",\"killed\":" << b(risk_.killed())
       << ",\"halt\":" << b(risk_.halted()) << ",\"lock\":" << b(risk_.locked()) << ",\"stub\":" << b(stub_)
       << ",\"rate\":" << stamps_.size() << ",\"rate_max\":" << lim_.rate_per_sec << ",\"queued\":" << queued()
-      << ",\"notional_rule\":" << lim_.max_order_notional << ",\"sel\":" << sel
+      << ",\"notional_rule\":" << lim_.max_order_notional << ",\"sel\":" << sel << ",\"day_start\":" << risk_.day_start()
+      << ",\"evseq\":" << ev_seq_ << ",\"strat_cap\":" << lim_.strat_daily_loss << ",\"stop_pct\":" << lim_.stop_pct
+      << ",\"chg\":{\"stt\":" << chg_.stt << ",\"txn\":" << chg_.txn << ",\"sebi\":" << chg_.sebi << ",\"stamp\":" << chg_.stamp << ",\"gst\":" << chg_.gst << ",\"brk\":" << chg_.brokerage << "}"
       << ",\"replay\":{\"has\":" << b(has_replay_) << ",\"date\":\"" << esc(replay_date_) << "\",\"mt\":" << mt_ << ",\"len\":" << kSession
       << ",\"speed\":" << speed_ << ",\"closed\":" << b(closed_) << "},\"inst\":[";
     for (std::size_t i = 0; i < inst_.size(); ++i) {
       const Inst& in = inst_[i];
       o << (i ? "," : "") << "{\"s\":\"" << esc(in.sym) << "\",\"v\":\"" << esc(in.venue) << "\",\"p\":" << rupees(in.px)
-        << ",\"pc\":" << rupees(in.prev) << ",\"t\":" << rupees(in.tick) << ",\"lot\":" << in.lot << ",\"src\":\"" << esc(in.source) << "\"";
+        << ",\"pc\":" << rupees(in.prev) << ",\"t\":" << rupees(in.tick) << ",\"lot\":" << in.lot << ",\"src\":\"" << esc(in.source) << "\",\"seg\":\"" << to_string(in.seg)
+        << "\",\"br\":" << buy_rate(i);
       if (in.has_day)
         o << ",\"day\":{\"date\":\"" << esc(in.day.date) << "\",\"o\":" << rupees(in.day.o) << ",\"h\":" << rupees(in.day.h) << ",\"l\":" << rupees(in.day.l)
           << ",\"c\":" << rupees(in.day.c) << ",\"vol\":" << in.day.vol_units << ",\"vnote\":\"" << esc(in.day.vol_note) << "\"}";
@@ -468,23 +571,47 @@ class LiveSim {
     for (const Lot& l : lots_) {
       if (l.qty <= 0) continue;
       o << (first ? "" : ",") << "{\"id\":\"" << tag(l.id) << "\",\"s\":\"" << esc(inst_[l.inst].sym) << "\",\"q\":" << l.qty << ",\"e\":" << l.entry
-        << ",\"ns\":\"" << l.ns << "\",\"mt\":" << l.mt << ",\"r\":" << l.realized << ",\"c\":" << b(l.closing) << ",\"by\":\"" << esc(l.closer) << "\"}";
+        << ",\"ns\":\"" << l.ns << "\",\"mt\":" << l.mt << ",\"r\":" << l.realized << ",\"c\":" << b(l.closing) << ",\"by\":\"" << esc(l.closer)
+        << "\",\"sl\":" << l.sl << ",\"tp\":" << l.tp << ",\"slp\":" << l.sl_px() << ",\"tpp\":" << l.tp_px() << ",\"dlv\":" << b(l.dlv)
+        << ",\"src\":\"" << esc(orders_[l.id - 1].src) << "\"}";
       first = false;
     }
     o << "],\"orders\":[";
-    const std::size_t keep = lite ? 40 : 200;
-    const std::size_t from = orders_.size() > keep ? orders_.size() - keep : 0;
-    for (std::size_t k = orders_.size(); k-- > from;) {
+    const std::size_t keep = lite ? 40 : 200;   // newest first; slices of split orders are shown through their parent
+    std::size_t shown = 0;
+    for (std::size_t k = orders_.size(); k-- > 0 && shown < keep;) {
       const Rec& r = orders_[k];
-      o << (k + 1 == orders_.size() ? "" : ",") << "{\"id\":\"" << tag(r.o.id) << "\",\"w\":" << r.wall << ",\"ns\":\"" << r.ns << "\",\"mt\":" << r.mt
+      if (r.parent) continue;
+      o << (shown++ ? "," : "") << "{\"id\":\"" << tag(r.o.id) << "\",\"w\":" << r.wall << ",\"ns\":\"" << r.ns << "\",\"mt\":" << r.mt
         << ",\"src\":\"" << esc(r.src) << "\",\"side\":\"" << to_string(r.o.side) << "\",\"q\":" << r.o.qty << ",\"f\":" << r.o.filled
         << ",\"s\":\"" << esc(inst_[r.o.inst].sym) << "\",\"type\":\"" << to_string(r.o.type) << "\",\"px\":" << rupees(r.o.px) << ",\"fp\":" << r.avg_fill()
-        << ",\"lot\":\"" << (r.lot ? tag(r.lot) : "") << "\",\"code\":\"" << esc(r.code) << "\",\"st\":\"" << to_string(r.o.st) << "\",\"why\":\"" << esc(r.why) << "\"}";
+        << ",\"lot\":\"" << (r.lot ? tag(r.lot) : "") << "\",\"sl\":" << r.sl << ",\"tp\":" << r.tp << ",\"split\":" << b(r.split)
+        << ",\"par\":\"" << (r.parent ? tag(r.parent) : "") << "\",\"code\":\"" << esc(r.code) << "\",\"st\":\"" << to_string(r.o.st) << "\",\"why\":\"" << esc(r.why) << "\"}";
+    }
+    o << "],\"strats\":[";
+    {
+      std::map<std::string, double> unreal;
+      for (const Lot& l : lots_) if (l.qty > 0) unreal[orders_[l.id - 1].src] += (rupees(inst_[l.inst].px) - l.entry) * static_cast<double>(l.qty);
+      bool f2 = true;
+      for (const auto& [src, st] : strat_) {
+        o << (f2 ? "" : ",") << "{\"src\":\"" << esc(src) << "\",\"pnl\":" << st.real + unreal[src] - st.fees << ",\"real\":" << st.real << ",\"fees\":" << st.fees
+          << ",\"halted\":" << b(st.halted) << ",\"limited\":" << b(src != "MANUAL") << "}";
+        f2 = false;
+      }
     }
     o << "],\"lite\":" << b(lite) << ",\"audit\":[";
     const std::size_t ef = events_.size() > (lite ? 25u : 150u) ? events_.size() - (lite ? 25u : 150u) : 0;
     for (std::size_t k = events_.size(); k-- > ef;)
-      o << (k + 1 == events_.size() ? "" : ",") << "{\"w\":" << events_[k].wall << ",\"k\":\"" << esc(events_[k].k) << "\",\"m\":\"" << esc(events_[k].m) << "\"}";
+      o << (k + 1 == events_.size() ? "" : ",") << "{\"w\":" << events_[k].wall << ",\"n\":" << events_[k].seq << ",\"k\":\"" << esc(events_[k].k) << "\",\"m\":\"" << esc(events_[k].m) << "\"}";
+    o << "],\"alerts\":[";   // the newest events that are not plain order / fill lines (split orders make hundreds of fills)
+    {
+      int n = 0;
+      for (std::size_t k = events_.size(); k-- > 0 && n < (lite ? 40 : 150);) {
+        const Evt& e = events_[k];
+        if (e.k == "ORDER" || e.k == "FILL") continue;
+        o << (n++ ? "," : "") << "{\"w\":" << e.wall << ",\"n\":" << e.seq << ",\"k\":\"" << esc(e.k) << "\",\"m\":\"" << esc(e.m) << "\"}";
+      }
+    }
     o << "],\"ledger\":[";
     if (!lite) for (std::size_t k = ledger_.size(); k-- > 0;)
       o << (k + 1 == ledger_.size() ? "" : ",") << "{\"w\":" << ledger_[k].wall << ",\"k\":\"" << ledger_[k].k << "\",\"a\":" << ledger_[k].a << ",\"b\":" << ledger_[k].b << "}";
@@ -496,10 +623,11 @@ class LiveSim {
 
  private:
   struct Inst {
-    std::string sym, venue; Price px = 0, start = 0, prev = 0, tick = 1; OrderBook book{256}; std::string source; Qty lot = 1;
+    std::string sym, venue; Price px = 0, start = 0, prev = 0, tick = 1; OrderBook book{256}; std::string source; Qty lot = 1; Seg seg = Seg::Stock;
     bool has_day = false; Day day; std::vector<Price> path; Qty level_qty = 0; std::string depth_note;
   };
   struct Act { bool close = false; OrderId id = 0; std::string src; };
+  struct St { double real = 0, fees = 0; bool halted = false; };   // one strategy (order source), today
   static constexpr OrderId kMaker = 1ULL << 62;
   static constexpr int kLevels = 10;
 
@@ -519,7 +647,7 @@ class LiveSim {
   }
   void adv(Order& o, Ev e) { State n; if (next_state(o.st, e, n)) o.st = n; }
   void log(const std::string& k, const std::string& m) {
-    events_.push_back({wall_, k, m});
+    events_.push_back({wall_, k, m, ++ev_seq_});
     if (events_.size() > 2000) events_.erase(events_.begin(), events_.begin() + 1000);
   }
   void prune(Ts now) {
@@ -569,7 +697,9 @@ class LiveSim {
       const Qty unf = in.book.add_market(id, side, qty, cb);
       if (unf > 0) {
         Rec& R = orders_[id - 1]; adv(R.o, Ev::CancelReq); adv(R.o, Ev::CancelAck); --live_;
-        log("CANCEL", tag(id) + " " + std::to_string(qty - unf) + " of " + std::to_string(qty) + " filled; remainder cancelled: not enough simulated depth");
+        if (R.parent) return;
+        log("PARTIAL FILL", tag(id) + " " + in.sym + ": " + std::to_string(qty - unf) + " of " + std::to_string(qty) + " filled at avg " + fmt(R.avg_fill()) +
+                                "; the remaining " + std::to_string(unf) + " cancelled: the simulated book had no more offers");
       }
     } else {
       in.book.add_limit(id, side, r0.o.px, qty, cb);
@@ -655,6 +785,28 @@ class LiveSim {
     }
   }
 
+  static bool on_tick(double rupee_px, Price tick) {
+    const Price p = static_cast<Price>(std::llround(rupee_px * 100.0));
+    return p > 0 && p % tick == 0 && std::fabs(rupees(p) - rupee_px) < 1e-6;
+  }
+  // Per-strategy daily loss (1.5% of the day's starting equity), for automated sources: everything not MANUAL.
+  // Day P&L of a source = realized today + unrealized on its open lots - its fees today.
+  void update_strategies(Ts) {
+    std::map<std::string, double> unreal;
+    for (const Lot& l : lots_) if (l.qty > 0) unreal[orders_[l.id - 1].src] += (rupees(inst_[l.inst].px) - l.entry) * static_cast<double>(l.qty);
+    const double cap = lim_.strat_daily_loss * risk_.day_start();
+    for (auto& [src, st] : strat_) {
+      if (src == "MANUAL" || st.halted || cap <= 0) continue;
+      const double pnl = st.real + unreal[src] - st.fees;
+      if (pnl <= -cap) {
+        st.halted = true;
+        int n = 0;
+        for (std::size_t k = 0; k < orders_.size(); ++k) if (orders_[k].src == src) n += queue_cancel(k + 1, "STRATEGY HALT");
+        log("STRATEGY HALT", src + " lost " + fmt(-pnl) + " today (limit " + fmt(cap) + " = " + fmt(lim_.strat_daily_loss * 100) +
+                                 "% of the day's starting equity): its new orders are blocked until the next trading day; " + std::to_string(n) + " open order(s) cancelled. Its positions keep their stops.");
+      }
+    }
+  }
   static Price path_at(const Inst& in, double mt) {
     const std::size_t k = std::min(in.path.size() - 1, static_cast<std::size_t>(mt * kRes));
     return in.path[k];
@@ -731,38 +883,105 @@ class LiveSim {
     if (t.maker < kMaker) apply_fill(t.maker, t.px, t.qty);
     if (t.taker < kMaker && t.taker != 0) apply_fill(t.taker, t.px, t.qty);
   }
+  void add_charges(const std::string& src, const Charges& c) {
+    chg_ += c; fees_ = chg_.total();
+    strat_[src].fees += c.total();
+  }
   void apply_fill(OrderId id, Price px, Qty q) {
     Rec& r = orders_[id - 1];
     r.o.filled += q; r.fill_val += rupees(px) * static_cast<double>(q);
     adv(r.o, r.o.filled == r.o.qty ? Ev::FullFill : Ev::PartialFill);
     if (r.o.st == State::Filled) --live_;
-    const double notional = rupees(px) * static_cast<double>(q), fee = notional * fee_bps_ / 1e4;
-    Fill f; f.id = id; f.inst = r.o.inst; f.side = r.o.side; f.px = px; f.qty = q;
-    pf_.apply(f, fee);
-    fees_ += fee; turn_ += notional;
-    if (r.o.side == Side::Buy) {           // each buy order is its own position lot
-      Lot* l = find_lot(id);
-      if (!l) { Lot n; n.id = id; n.inst = r.o.inst; n.ns = wall_ns_; n.mt = has_replay_ ? mt_ : -1; lots_.push_back(n); l = &lots_.back(); }
+    const OrderId owner = r.parent ? r.parent : id;   // a split slice belongs to its parent order
+    if (r.parent) {
+      Rec& P = orders_[r.parent - 1];
+      P.o.filled += q; P.fill_val += rupees(px) * static_cast<double>(q);
+      if (is_live(P.o.st)) { adv(P.o, P.o.filled == P.o.qty ? Ev::FullFill : Ev::PartialFill); if (P.o.st == State::Filled) { --live_; log("SPLIT", tag(P.o.id) + " complete: " + std::to_string(P.o.filled) + " filled at avg " + fmt(P.avg_fill())); } }
+    }
+    const Inst& in = inst_[r.o.inst];
+    const double notional = rupees(px) * static_cast<double>(q);
+    const std::string& osrc = orders_[owner - 1].src;
+    Charges paid;
+    if (r.o.side == Side::Buy) {           // each buy order (or split order) is its own position lot
+      paid = nse_charges(rates_, in.seg, Side::Buy, notional, false);   // intraday rates until the position is carried overnight
+      Lot* l = find_lot(owner);
+      if (!l) {
+        const Rec& O = orders_[owner - 1];
+        Lot n; n.id = owner; n.inst = r.o.inst; n.ns = wall_ns_; n.mt = has_replay_ ? mt_ : -1; n.sl = O.sl; n.tp = O.tp; n.day = day_;
+        lots_.push_back(n); l = &lots_.back();
+      }
       l->qty += q; l->cost += notional; l->entry = l->cost / static_cast<double>(l->qty);
+      add_charges(osrc, paid);
     } else {                               // the targeted lot first, then oldest lots not being closed, then the rest
       Qty left = q;
       auto take = [&](Lot& l) {
         const Qty a = std::min(left, l.qty);
         if (a <= 0) return;
         const double pnl = (rupees(px) - l.entry) * static_cast<double>(a);
+        const Charges c = nse_charges(rates_, in.seg, Side::Sell, rupees(px) * static_cast<double>(a), l.day != day_ || l.dlv);
         l.realized += pnl; real_ += pnl; l.cost -= l.entry * static_cast<double>(a); l.qty -= a; left -= a;
+        const std::string& lsrc = orders_[l.id - 1].src;   // P&L and the exit charges belong to the strategy that opened the lot
+        strat_[lsrc].real += pnl; add_charges(lsrc, c); paid += c;
         if (l.qty == 0) { l.cost = 0; l.closing = false; }
       };
       if (r.lot) if (Lot* l = find_lot(r.lot)) take(*l);
       for (Lot& l : lots_) if (left > 0 && l.inst == r.o.inst && !l.closing) take(l);
       for (Lot& l : lots_) if (left > 0 && l.inst == r.o.inst) take(l);
+      if (left > 0) { const Charges c = nse_charges(rates_, in.seg, Side::Sell, rupees(px) * static_cast<double>(left), false); add_charges(osrc, c); paid += c; }
     }
-    log("FILL", "SIM " + tag(id) + " " + to_string(r.o.side) + " " + std::to_string(q) + " " + inst_[r.o.inst].sym + " @ " + money(px));
+    Fill f; f.id = id; f.inst = r.o.inst; f.side = r.o.side; f.px = px; f.qty = q;
+    pf_.apply(f, paid.total());
+    turn_ += notional;
+    log("FILL", "SIM " + tag(id) + (r.parent ? " (slice of " + tag(r.parent) + ")" : "") + " " + to_string(r.o.side) + " " + std::to_string(q) + " " + in.sym + " @ " + money(px) +
+                    " · charges " + fmt(paid.total()));
+  }
+  // Bid quantity visible now (what a market sell can get).
+  Qty bid_depth(std::size_t i) const { Qty d = 0; inst_[i].book.levels(Side::Buy, 1 << 20, [&](Price, Qty q) { d += q; }); return d; }
+  // Sends the next slice of every open split order: as much as the book offers now (whole lots), one rate
+  // token per slice. Each slice passes the cash and exposure checks; a parent stops when it cannot continue.
+  void work_splits(Ts now) {
+    for (std::size_t k = 0; k < orders_.size(); ++k) {
+      Rec& P = orders_[k];
+      if (!P.split || !is_live(P.o.st)) continue;
+      const std::size_t i = P.o.inst;
+      const Inst& in = inst_[i];
+      std::string stop;
+      if (risk_.killed()) stop = "kill switch";
+      else if (closed_) stop = "market closed";
+      else if (risk_.halted() || risk_.locked()) stop = "daily limit";
+      else if (P.o.side == Side::Buy && strategy_halted(P.src)) stop = "strategy daily loss limit";
+      if (!stop.empty()) { do_cancel(P.o.id, "SPLIT"); log("SPLIT", tag(P.o.id) + " stopped (" + stop + ") after " + std::to_string(P.o.filled) + " of " + std::to_string(P.o.qty)); continue; }
+      if (!q_.empty() || !later_.empty()) return;   // exits and cancels go first
+      const Qty rem = P.o.qty - P.o.filled;
+      Qty q = P.o.side == Side::Buy ? fillable_buy(i, rem).first : std::min(rem, exit_room(i));
+      q = (q / in.lot) * in.lot;
+      if (q <= 0) continue;                          // book empty right now: next refill
+      if (P.o.side == Side::Buy) {                   // cash and exposure, checked for every slice
+        const auto [got, avg] = fillable_buy(i, q);
+        const double cost = avg * static_cast<double>(got) * (1.0 + buy_rate(i));
+        double pend = 0;
+        for (const Rec& o : orders_) if (is_live(o.o.st) && o.o.side == Side::Buy && o.o.type == OrdType::Limit) pend += rupees(o.o.px) * static_cast<double>(o.o.qty - o.o.filled) * (1.0 + buy_rate(o.o.inst));
+        if (cost + pend > pf_.cash() || pf_.gross(marks_) + pend + cost > lim_.max_gross * equity()) {
+          do_cancel(P.o.id, "SPLIT");
+          log("SPLIT", tag(P.o.id) + " stopped after " + std::to_string(P.o.filled) + " of " + std::to_string(P.o.qty) + ": the next slice would exceed cash or the 100% exposure limit");
+          continue;
+        }
+        if (self_cross(i, Side::Buy, OrdType::Market, 0)) { do_cancel(P.o.id, "SPLIT"); log("SPLIT", tag(P.o.id) + " stopped: it would trade with your own resting sell"); continue; }
+      }
+      if (!risk_.take_rate_token(now)) return;
+      stamps_.push_back(now);
+      Rec c;
+      c.o.id = orders_.size() + 1; c.o.inst = static_cast<std::uint32_t>(i); c.o.side = P.o.side; c.o.type = OrdType::Market; c.o.qty = q;
+      c.src = P.src; c.wall = wall_; c.ns = wall_ns_; c.mt = has_replay_ ? mt_ : -1; c.parent = P.o.id;
+      adv(c.o, Ev::Submit);
+      send(c, now);                                  // may reallocate orders_: P is not used after this
+    }
   }
 
   double capital_;
   RiskLimits lim_;
-  double fee_bps_;
+  ChargeRates rates_;
+  Charges chg_;
   Rng rng_;
   Portfolio pf_;
   RiskEngine risk_;
@@ -781,10 +1000,13 @@ class LiveSim {
   long ticks_ = 0;
   std::int64_t wall_ = 0, wall_ns_ = 0, day_ = 0;
   Ts last_step_ = 0, next_stub_ = 0, next_curve_ = 0;
+  bool stepped_ = false;
   bool stub_ = false, kill_pending_ = false, flatten_pending_ = false;
   bool has_replay_ = false, closed_ = false;
   double mt_ = 0, speed_ = 1;
   std::string replay_date_;
+  std::map<std::string, St> strat_;
+  long ev_seq_ = 0;
 };
 
 }  // namespace mc

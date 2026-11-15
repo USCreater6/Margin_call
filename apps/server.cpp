@@ -91,7 +91,8 @@ bool url_decode(const std::string& in, std::string& out) {
 }
 std::string lower(std::string s) { for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; }
 // Instruments file written by tools/fetch_latest.py. Lines starting with # are comments.
-// symbol,venue,price,tick,lot,source[,date,open,high,low,close,prev_close,volume_units,volume_check]
+// symbol,venue,price,tick,lot,source[,date,open,high,low,close,prev_close,volume_units,volume_check[,kind]]
+// kind = stock | gold-etf | index-future (decides the statutory charges); without it: F&O venue = index-future, else stock.
 // Prices in rupees. With the day columns, the session replays that NSE trading day.
 int load_instruments(LiveSim& sim, const std::string& path) {
   std::ifstream f(path);
@@ -109,6 +110,8 @@ int load_instruments(LiveSim& sim, const std::string& path) {
     const Price t = static_cast<Price>(std::llround(tick * 100.0));
     const Price p = std::max<Price>(t, static_cast<Price>(std::llround(px * 100.0 / static_cast<double>(t))) * t);
     sim.add_instrument(c[0], c[1], p, t, c[5], lot > 0 ? lot : 1);
+    const std::string kind = c.size() >= 15 ? c[14] : "";
+    sim.set_segment(sim.instruments() - 1, kind == "gold-etf" ? Seg::GoldEtf : kind == "index-future" || (kind.empty() && c[1].find("F&O") != std::string::npos) ? Seg::IndexFuture : Seg::Stock);
     if (c.size() >= 13) {
       LiveSim::Day d;
       d.date = c[6]; d.o = paise(c[7]); d.h = paise(c[8]); d.l = paise(c[9]); d.c = paise(c[10]); d.pc = paise(c[11]);
@@ -203,6 +206,14 @@ int main(int argc, char** argv) {
     if (std::filesystem::exists(hf)) { const LoadResult r = load_bars(hf); if (r.ok) agent.set_history(i, r.bars); }
   }
   std::printf("G.R.I.T agent: OFF; daily history for %d of %zu instruments\n", agent.with_history(), sim.instruments());
+  // On a fresh Codespace the year of history is still downloading when the engine starts: look again every
+  // minute until every instrument that can have a history file has one.
+  auto reload_history = [&]() {
+    for (std::size_t i = 0; i < sim.instruments(); ++i) {
+      const std::string hf = web + "/data/history/" + sim.sym(i) + ".csv";
+      if (std::filesystem::exists(hf)) { const LoadResult r = load_bars(hf); if (r.ok) agent.set_history(i, r.bars); }
+    }
+  };
   auto write_agent_log = [&]() {
     auto lines = agent.drain_log();
     if (lines.empty() || agent_log == "-") return;
@@ -229,7 +240,7 @@ int main(int argc, char** argv) {
   std::fflush(stdout);
 
   constexpr Ts kTick = 250000000LL;                 // 4 market updates per second
-  Ts next_tick = mono_ns() + kTick, next_save = mono_ns() + 2000000000LL;
+  Ts next_tick = mono_ns() + kTick, next_save = mono_ns() + 2000000000LL, next_hist = mono_ns() + 60000000000LL;
   for (;;) {
     pollfd p{ls, POLLIN, 0};
     ::poll(&p, 1, 50);
@@ -239,6 +250,7 @@ int main(int argc, char** argv) {
     while (now >= next_tick) { sim.step(next_tick); agent.tick(sim, next_tick); next_tick += kTick; }
     write_agent_log();
     if (now >= next_save) { persist(); next_save = now + 2000000000LL; }
+    if (now >= next_hist) { if (static_cast<std::size_t>(agent.with_history()) < sim.instruments()) reload_history(); next_hist = now + 60000000000LL; }
     sim.pump(now);   // queued cancels and exits go out as rate tokens free up (8 per second)
     if (!(p.revents & POLLIN)) continue;
     const int fd = ::accept(ls, nullptr, nullptr);
@@ -276,6 +288,25 @@ int main(int argc, char** argv) {
       std::size_t sel = 0;
       if (const auto s = query.find("sel="); s != std::string::npos) sel = static_cast<std::size_t>(std::atol(query.c_str() + s + 4));
       respond(fd, 200, "application/json", sim.state_json(sel, now, query.find("lite=1") != std::string::npos));
+    } else if (path == "/api/quote" && method == "GET") {   // what a market buy of qty would get now from the visible book
+      std::string sym, q;
+      for (const std::string& kv : {std::string("sym="), std::string("qty=")}) {
+        const auto s = query.find(kv);
+        if (s == std::string::npos) continue;
+        const auto e = query.find('&', s);
+        std::string v = query.substr(s + kv.size(), e == std::string::npos ? std::string::npos : e - s - kv.size()), dv;
+        if (!url_decode(v, dv)) dv.clear();
+        (kv == "sym=" ? sym : q) = dv;
+      }
+      const int i = sim.find_symbol(sym);
+      const long long qty = std::atoll(q.c_str());
+      if (i < 0 || qty <= 0) respond(fd, 200, "application/json", ok("Unknown instrument or quantity"));
+      else {
+        const auto [got, avg] = sim.fillable_buy(static_cast<std::size_t>(i), qty);
+        std::ostringstream o; o.precision(12);
+        o << "{\"ok\":true,\"qty\":" << qty << ",\"fillable\":" << got << ",\"avg\":" << avg << ",\"depth\":" << sim.ask_depth(static_cast<std::size_t>(i)) << "}";
+        respond(fd, 200, "application/json", o.str());
+      }
     } else if (path == "/api/agent" && method == "GET") {
       respond(fd, 200, "application/json", agent.json(sim));
     } else if (path.rfind("/api/", 0) == 0 && method == "POST") {
@@ -284,18 +315,33 @@ int main(int argc, char** argv) {
         const int i = sim.find_symbol(jget(body, "sym"));
         const std::string side = jget(body, "side"), type = jget(body, "type");
         const double qty = std::atof(jget(body, "qty").c_str()), px = std::atof(jget(body, "px").c_str());
+        const double sl = std::atof(jget(body, "sl").c_str()), tp = std::atof(jget(body, "tp").c_str());   // % of entry
+        const bool split = jget(body, "split") == "true";
         if (i < 0) out = ok("Unknown instrument");
         else if ((side != "BUY" && side != "SELL") || (type != "MARKET" && type != "LIMIT")) out = ok("Side must be BUY or SELL; type MARKET or LIMIT");
         else if (!(qty >= 1) || qty > 1e9 || qty != std::floor(qty)) out = ok("Quantity must be a whole number of 1 or more");
         else {
+          const std::size_t before = sim.orders().size();   // the new order's index (a split order's slices come after it)
           const std::string why = sim.submit(static_cast<std::size_t>(i), side == "BUY" ? Side::Buy : Side::Sell, type == "MARKET" ? OrdType::Market : OrdType::Limit,
-                                             static_cast<Qty>(qty), static_cast<Price>(std::llround(px * 100.0)), "MANUAL", now);
-          out = ok(why, why.empty() ? "" : sim.orders().back().code);
+                                             static_cast<Qty>(qty), static_cast<Price>(std::llround(px * 100.0)), "MANUAL", now, sl, tp, split);
+          // the reply says what actually happened: filled quantity and average price, not just "accepted"
+          const auto& r = sim.orders()[before];
+          std::ostringstream ex;
+          ex.precision(15);
+          ex << ",\"id\":" << r.o.id << ",\"qty\":" << r.o.qty << ",\"filled\":" << r.o.filled << ",\"avg\":" << r.avg_fill() << ",\"st\":\"" << to_string(r.o.st)
+             << "\",\"split\":" << (r.split ? "true" : "false");
+          out = ok(why, why.empty() ? "" : r.code);
+          out.insert(out.size() - 1, ex.str());
         }
       } else if (path == "/api/cancel") {
         const std::string id = jget(body, "id");
         const std::size_t d = id.find_first_of("0123456789");
         out = (d != std::string::npos && sim.cancel(static_cast<OrderId>(std::atoll(id.c_str() + d)), now)) ? ok() : ok("Order is not open");
+      } else if (path == "/api/exits") {   // owner sets / clears the stop loss and take profit of one position
+        const std::string id = jget(body, "id");
+        const std::size_t d = id.find_first_of("0123456789");
+        out = d == std::string::npos ? ok("Unknown position")
+                                     : ok(sim.set_exits(static_cast<OrderId>(std::atoll(id.c_str() + d)), std::atof(jget(body, "sl").c_str()), std::atof(jget(body, "tp").c_str())));
       } else if (path == "/api/cancel_all") sim.cancel_all(now);
       else if (path == "/api/flatten") sim.flatten(now);
       else if (path == "/api/kill") { sim.kill(now); agent.on_kill(sim, now); }
@@ -311,7 +357,10 @@ int main(int argc, char** argv) {
       else if (path == "/api/restart") { const std::string w = sim.restart_replay(); out = ok(w, w.empty() ? "" : "NOT_FLAT"); if (w.empty()) agent.new_day(); }
       else if (path == "/api/rearm") sim.rearm();
       else if (path == "/api/reset") { sim.reset(); agent.new_day(); }
-      else if (path == "/api/fund") out = sim.fund(std::atof(jget(body, "amount").c_str())) ? ok() : ok("Enter an amount above zero");
+      else if (path == "/api/fund") {
+        const double amt = std::atof(jget(body, "amount").c_str());
+        out = sim.fund(amt) ? ok() : ok(amt > 0 ? "One deposit can be at most 1,00,000 crore (1e12)" : "Enter an amount above zero");
+      }
       else if (path == "/api/stub") sim.set_stub(jget(body, "on") == "true");
       else { respond(fd, 404, "application/json", ok("Unknown endpoint")); ::close(fd); continue; }
       respond(fd, 200, "application/json", out);
