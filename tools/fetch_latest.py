@@ -165,9 +165,36 @@ def main():
     blob = open(os.path.join(a.cache, last.strftime("%Y%m%d") + ".zip"), "rb").read()
     rd = csv.DictReader(io.StringIO(read_zip(blob)))
     rd.fieldnames = [x.strip() for x in rd.fieldnames]
+    universe = []   # every EQ-series share of the day: the terminal's search, NIFTY 50 list and watched stocks
     for r in rd:
-        if r[col["ser"]].strip() == "EQ" and r[col["sym"]].strip() in WATCH:
-            raw[r[col["sym"]].strip()] = r
+        if r[col["ser"]].strip() != "EQ":
+            continue
+        sym = r[col["sym"]].strip()
+        if sym in WATCH:
+            raw[sym] = r
+        try:
+            o, h, l, c, pc = (float(r[col[k]]) for k in ("o", "h", "l", "c", "pc"))
+        except ValueError:
+            continue
+        vu, _ = vol_units(r.get(col["v"]), r.get("TtlTrfVal"), r.get(col["c"]), 1)
+        t = eq_tick.get(sym)
+        ok = bool(t) and on_grid([o, h, l, c], t)
+        universe.append(f"{sym},{o:.2f},{h:.2f},{l:.2f},{c:.2f},{pc:.2f},{vu},{t if ok else FALLBACK_TICK:g},{'master' if ok else 'not verified'},{KIND.get(sym, 'stock')}")
+    with open(os.path.join(a.out, "universe.csv"), "w") as f:
+        f.write(f"# NSE CM daily file {last}, EQ series: official open, high, low, close, previous close, traded units; tick from the NSE security master.\n")
+        f.write("# kind: gold-etf only for GOLDBEES (verified); every other symbol is charged at company-share rates (ETFs other than GOLDBEES: not verified).\n")
+        f.write(f"symbol,open,high,low,close,prev_close,volume_units,tick,tick_check,kind\n" + "\n".join(universe) + "\n")
+    blob50, st50 = fetch("https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv")
+    if st50 == 200:
+        n50 = [r["Symbol"].strip() for r in csv.DictReader(io.StringIO(blob50.decode("utf-8", "replace"))) if r.get("Symbol")]
+        open(os.path.join(a.out, "nifty50.txt"), "w").write("\n".join(n50) + "\n")
+        print(f"NIFTY 50 list: {len(n50)} members")
+    else:
+        print(f"NIFTY 50 list HTTP {st50}: kept the previous list if any")
+    os.makedirs("web/data", exist_ok=True)
+    json.dump({"date": str(last), "symbols": [[u.split(",")[0], float(u.split(",")[4])] for u in universe]},
+              open("web/data/universe.json", "w"), separators=(",", ":"))
+    print(f"universe: {len(universe)} EQ symbols")
     for s in WATCH:
         r = raw.get(s)
         if not r:

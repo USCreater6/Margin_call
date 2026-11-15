@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Daily history for every NSE stock (120 days) and the replay day
-        run: mkdir -p .cache/nse web/data/history && python3 tools/fetch_latest.py --days 120
+        run: mkdir -p .cache/nse web/data/history && python3 tools/fetch_latest.py --days 120 && head -3 data/latest/universe.csv
       - name: NIFTY options, nearest expiry
         run: python3 tools/fetch_options.py --strikes 10
       - name: NIFTY 50 members and a symbol list for search
@@ -34,7 +34,7 @@ jobs:
           for s in members:
               p = "web/data/history/" + s + ".csv"
               if os.path.exists(p): shutil.copy(p, "out/history/")
-          for f in ("data/latest/instruments.csv", "data/latest/options.csv"):
+          for f in ("data/latest/instruments.csv", "data/latest/options.csv", "data/latest/universe.csv", "data/latest/nifty50.txt", "web/data/universe.json"):
               if os.path.exists(f): shutil.copy(f, "out/")
           print(len(rows), "symbols;", len(members), "NIFTY 50 members")
           PY

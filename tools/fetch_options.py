@@ -44,7 +44,16 @@ def main():
     if not futs or not opts:
         print("NIFTY futures or options not found in the file"); sys.exit(4)
     ref = float(futs[0]["ClsPric"])
-    exp = sorted({r["XpryDt"] for r in opts})[0]
+    exp = sorted({r["XpryDt"] for r in opts if r["XpryDt"] > str(day)})[0]   # an expiry after the file day (not one that ends that day)
+    tick, tnote = 0.05, "not verified (FO master unreadable)"
+    import gzip
+    mb, mst = fetch("https://nsearchives.nseindia.com/content/fo/NSE_FO_contract_" + day.strftime("%d%m%Y") + ".csv.gz")
+    if mst == 200:
+        ts = {int(m["BidIntrvl"]) for m in csv.DictReader(io.StringIO(gzip.decompress(mb).decode("utf-8", "replace")))
+              if m.get("FinInstrmNm", "").strip() == "OPTIDX" and m.get("TckrSymb", "").strip() == "NIFTY" and m.get("BidIntrvl", "").strip().isdigit()}
+        if len(ts) == 1: tick, tnote = ts.pop() / 100.0, "NSE FO master"
+        else: tnote = f"FO master BidIntrvl values {sorted(ts)}: not one value"
+    print("NIFTY option tick:", tick, tnote)
     near = [r for r in opts if r["XpryDt"] == exp]
     strikes = sorted({float(r["StrkPric"]) for r in near})
     atm = min(range(len(strikes)), key=lambda k: abs(strikes[k] - ref))
@@ -53,7 +62,8 @@ def main():
     print(f"day {day}; nearest expiry {exp}; {len(strikes)} strikes listed; futures close {ref}; keeping {len(keep)} strikes around {strikes[atm]}")
     out = ["# NSE F&O daily file " + str(day) + ": official open, high, low, close, previous close, traded volume and open interest.",
            "# Intraday moves are not in the file. Option prices are premiums per unit; lot = units per contract (NewBrdLotQty).",
-           "symbol,expiry,strike,type,open,high,low,close,prev_close,volume,turnover,open_interest,lot,fin_instr_name,underlying_close,settle"]
+           "# tick " + f"{tick:g} ({tnote}); NIFTY futures close (nearest) " + futs[0]["ClsPric"] + "; volume = contracts",
+           "symbol,expiry,strike,type,open,high,low,close,prev_close,volume,turnover,open_interest,lot,fin_instr_name,underlying_close,settle,tick,fut_close"]
     for r in sorted(near, key=lambda r: (float(r["StrkPric"]), r["OptnTp"])):
         if float(r["StrkPric"]) not in keep:
             continue
@@ -61,9 +71,9 @@ def main():
         sym = f"NIFTY {exp} {k:g} {r['OptnTp']}"
         out.append(",".join([sym, exp, f"{k:g}", r["OptnTp"], r["OpnPric"], r["HghPric"], r["LwPric"], r["ClsPric"], r["PrvsClsgPric"],
                              r.get("TtlTradgVol", ""), r.get("TtlTrfVal", ""), r.get("OpnIntrst", ""), r.get("NewBrdLotQty", ""),
-                             r.get("FinInstrmNm", "").replace(",", " "), r.get("UndrlygPric", ""), r.get("SttlmPric", "")]))
+                             r.get("FinInstrmNm", "").replace(",", " "), r.get("UndrlygPric", ""), r.get("SttlmPric", ""), f"{tick:g}", futs[0]["ClsPric"]]))
     open(os.path.join(a.out, "options.csv"), "w").write("\n".join(out) + "\n")
-    print("\n".join(out[:8])); print(f"... {len(out) - 3} option rows written to {a.out}/options.csv")
+    print("\n".join(out[:9])); print(f"... {len(out) - 4} option rows written to {a.out}/options.csv")
 
 
 if __name__ == "__main__":
