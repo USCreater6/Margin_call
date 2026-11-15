@@ -22,15 +22,15 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13
 button,input,select{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .mono,table,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
-header{display:flex;flex-wrap:nowrap;gap:4px 8px;align-items:center;padding:4px 10px;border-bottom:1px solid var(--line);background:var(--panel);min-width:0}
+header{display:flex;flex-wrap:nowrap;gap:4px 5px;align-items:center;padding:3px 8px;border-bottom:1px solid var(--line);background:var(--panel);min-width:0}
 header>*{flex:none}header nav{flex:0 1 auto;min-width:0}
-.brand{font-family:var(--mono);font-weight:600;font-size:15px;color:var(--accent);letter-spacing:.04em}
-nav{display:flex;gap:0;overflow-x:auto}
-nav a{padding:5px 7px;color:var(--mute);text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap}
+.brand{font-family:var(--mono);font-weight:600;font-size:13px;color:var(--accent);letter-spacing:.04em}
+nav{display:flex;gap:0;overflow:hidden;scrollbar-width:none}nav::-webkit-scrollbar{display:none}
+nav a{padding:5px 4px;font-size:12.5px;color:var(--mute);text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap}
 nav a.on{color:var(--text);border-bottom-color:var(--accent);font-weight:500}
 .spacer{flex:1}
-.kv{font-size:11px;color:var(--mute);display:flex;flex-direction:column;line-height:1.2}
-.kv b{font-family:var(--mono);font-size:12.5px;color:var(--text);font-weight:500}
+.kv{font-size:10.5px;color:var(--mute);white-space:nowrap;display:flex;flex-direction:column;line-height:1.2}
+.kv b{font-family:var(--mono);font-size:11.5px;color:var(--text);font-weight:500}
 .pill{font-family:var(--mono);font-size:11px;padding:0 6px;border:1px solid var(--line);border-radius:3px;white-space:nowrap;display:inline-block}
 .pill.sim{border-color:var(--accent);color:var(--accent)}.pill.ok{border-color:var(--good);color:var(--good)}.pill.bad{border-color:var(--bad);color:var(--bad)}.pill.warn{border-color:var(--warn);color:var(--warn)}.pill.lock{color:var(--mute)}
 main{flex:1;min-height:0;padding:6px 16px}
@@ -49,8 +49,17 @@ main{flex:1;min-height:0;padding:6px 16px}
 #v-account.on{grid-template-rows:minmax(0,1fr) minmax(0,1.15fr)}
 .side{grid-column:33 / span 16;grid-row:1 / span 2;display:flex;min-width:0;min-height:0}
 /* terminal columns (48-column grid): with the media panel open (it takes columns 33-48) and with it hidden */
-.tw{grid-column:span 10}.tb{grid-column:span 13}.tt{grid-column:span 9}.tbl{grid-column:span 13}.tp{grid-column:span 19}
-#v-terminal.nomedia:not(.alerts) .tw{grid-column:span 11}#v-terminal.nomedia:not(.alerts) .tb{grid-column:span 25}#v-terminal.nomedia:not(.alerts) .tt{grid-column:span 12}
+/* top row: watchlist | chart | ticket in one flex row with two drag handles (widths saved per media state) */
+.toprow{grid-column:1 / span 32;grid-row:1;display:flex;min-width:0;min-height:0}
+#v-terminal.nomedia:not(.alerts) .toprow{grid-column:1 / span 48}
+.toprow>.panel{min-width:0}.toprow .tw{flex:0 0 var(--w1,30%)}.toprow .tb{flex:1 1 0}.toprow .tt{flex:0 0 var(--w3,28%)}
+.vsplit{flex:none;width:6px;cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none}
+.vsplit::after{content:"";width:2px;height:40px;border-radius:2px;background:var(--line)}
+.vsplit:hover::after,.vsplit.on::after{background:var(--accent)}
+.tbl{grid-column:span 13;grid-row:2}.tp{grid-column:span 19;grid-row:2}
+/* watchlist: the scrollbar gets its own gutter so it never covers the Chg column */
+.tw .fit{scrollbar-gutter:stable;scrollbar-width:thin}
+
 #v-terminal.nomedia:not(.alerts) .tbl{grid-column:span 22}#v-terminal.nomedia:not(.alerts) .tp{grid-column:span 26}
 /* alerts panel: takes the media column when opened; the media panel is then hidden (TV keeps playing) */
 #alertSide{grid-column:33 / span 16;grid-row:1 / span 2;display:none;min-width:0;min-height:0}
@@ -139,7 +148,7 @@ label.f .lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:bl
 #pop{position:fixed;right:12px;top:44px;z-index:9;max-width:480px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 12px;font-size:12.5px;display:none;box-shadow:0 6px 20px rgba(0,0,0,.35)}
 #pop.on{display:block}#pop td{white-space:normal;text-align:left;vertical-align:top}
 input,select{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;font-family:var(--mono);width:100%}
-header select{width:auto;font-size:12px}
+header select{width:auto;font-size:11px;padding:1px 2px}header .pill{padding:0 4px;font-size:10.5px}header .btn.sm{padding:0 5px;font-size:11px}
 .bar{height:5px;background:var(--row);border-radius:3px;overflow:hidden;min-width:60px}
 .bar i{display:block;height:100%;background:var(--good)}.bar i.w{background:var(--warn)}.bar i.b{background:var(--bad)}
 .empty{color:var(--mute);padding:8px;border:1px dashed var(--line);border-radius:3px}
@@ -224,15 +233,18 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
 <main>
 
 <section class="view" id="v-terminal">
+  <div class="toprow" id="topRow">
   <div class="panel tw"><h2>Watchlist <span class="tabs" id="wlT"><button data-w="my" class="on">My list</button><button data-w="n50">NIFTY 50</button></span></h2>
     <div class="srch"><input id="q" placeholder="Search any NSE stock or NIFTY option…" autocomplete="off" aria-label="Search NSE stocks and NIFTY options"><div id="sr"></div></div>
     <div class="row wlbar"><span class="pill sim" id="wlSrc" title="">-</span><select id="spd" aria-label="Replay speed" title="Replay speed" style="width:auto;font-size:11px;padding:0 2px"><option value="1" title="Real time: the session takes 6 h 15 min">1× live</option><option value="2">2×</option><option value="6.25" title="Whole session in 60 minutes">60 min</option><option value="12.5" title="Whole session in 30 minutes">30 min</option><option value="25" title="Whole session in 15 minutes">15 min</option><option value="0">Pause</option></select><button class="btn sm" data-act="restart" title="Start the day again from 09:15 (only when flat)">↺</button></div>
     <div class="fit" style="overflow-y:auto"><table id="watch"></table></div></div>
+  <div class="vsplit" data-split="1" title="Drag to resize; double-click to reset" role="separator" aria-orientation="vertical"></div>
   <div class="panel tb"><h2><span class="tabs" id="cxT"><button data-c="chart" class="on">Chart</button><button data-c="book">Book</button><button data-c="oc">Option chain</button></span><span id="bookSym" class="mono"></span></h2>
     <div id="pChart" class="cxp"><div class="chead"><b id="cSym"></b><span id="cLast"></span><span class="tf" id="tf"><button data-tf="60" class="on">1m</button> <button data-tf="300">5m</button> <button data-tf="900">15m</button> <button data-tf="D">1D</button></span><span id="cDay" class="mute"></span></div>
       <div id="cv"><canvas id="cnv"></canvas></div><div class="cnote" id="cNote"></div></div>
     <div id="pBook" class="cxp" style="display:none"><div class="fix"><table id="book"></table></div></div>
     <div id="pOc" class="cxp" style="display:none"><div class="cnote" id="ocNote" style="border-bottom:1px solid var(--line)"></div><div id="ocS" style="flex:1;min-height:0;overflow:auto"><table id="oc"></table></div></div></div>
+  <div class="vsplit" data-split="3" title="Drag to resize; double-click to reset" role="separator" aria-orientation="vertical"></div>
   <div class="panel tt"><h2>Order ticket <span class="pill sim">SIM</span></h2><div class="fix"><div class="body">
     <div class="g2">
       <label class="f" for="tSym"><span class="lb">Instrument</span><select id="tSym"></select></label>
@@ -251,6 +263,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:
     </div>
     <p class="note">Stub signals are random, not GRIT.</p>
   </div></div></div>
+  </div>
   <div class="side">
     <div class="panel"><h2>Adverse media <span class="row" style="gap:4px;align-items:center"><span class="pill sim" id="newsSrc">SAMPLE</span><button class="btn sm" data-act="media" title="Hide (TV keeps playing)">Hide ▸</button></span></h2>
       <div class="tvbar"><select id="chan" aria-label="TV channel"><option>Loading channels…</option></select><a id="chanOpen" class="btn sm" href="#" target="_blank" rel="noopener noreferrer">Open on YouTube</a></div>
@@ -484,7 +497,10 @@ const GROUPS=['parent','subsidiary','associate','joint venture','joint venture p
 C.links={};C.filter='all';
 async function loadConnector(){
   try{const r=await fetch('data/connector.json',{cache:'no-store'});if(!r.ok)throw 0;C.data=await r.json()}
-  catch(e){$('#web').innerHTML='<div class="body"><div class="empty">Connector data is not built yet. It builds automatically when the Codespace starts (a few minutes on first start), then refresh this page.</div></div>';return}
+  catch(e){
+    let st='';try{const j=await(await fetch('api/jobs?name=connector',{cache:'no-store'})).json();st=j.running?'Building now.':j.log?'Not running. Last lines of logs/connector.log:':'No build log yet.';if(j.log)st+='<pre>'+H(j.log)+'</pre>'}catch(x){}
+    $('#web').innerHTML='<div class="body"><div class="empty">Connector data is not built yet. It builds by itself when the Codespace starts (a few minutes; on a new Codespace the year of price history downloads at the same time). This page loads it as soon as it is ready.<br>'+st+'</div></div>';
+    clearTimeout(C.retry);C.retry=setTimeout(loadConnector,20000);return}
   C.idx={};C.data.c.forEach(x=>{C.idx[x[0]]=x});
   const ordered=C.data.c.slice().sort((a,b)=>(b[5].includes('NIFTY 50')-a[5].includes('NIFTY 50'))||(b[4]-a[4]));
   $('#cList').innerHTML=ordered.map(x=>'<option value="'+H((x[1]||x[2])+' · '+x[3])+'">').join('');
@@ -692,6 +708,23 @@ $('#dsK').onclick=()=>{const L=WLD.live||{};$('#pop').innerHTML='<b>Where prices
 setInterval(()=>{if(CX==='chart')loadCandles()},2000);
 setInterval(loadWL,30000);
 addEventListener('resize',()=>drawChart());
+/* top row resize: widths in % of the row, kept per media state (open / hidden) in this browser */
+const WK=()=>$('#v-terminal').classList.contains('nomedia')&&!$('#v-terminal').classList.contains('alerts')?'full':'media';
+const WDEF={full:[23,25],media:[31,28]};
+function getW(){try{const w=JSON.parse(localStorage.getItem('mc_top_'+WK()));if(Array.isArray(w)&&w.length===2)return w}catch(e){}return WDEF[WK()]}
+function applyW(w){const r=$('#topRow');r.style.setProperty('--w1',w[0]+'%');r.style.setProperty('--w3',w[1]+'%')}
+function setW(w){applyW(w);try{localStorage.setItem('mc_top_'+WK(),JSON.stringify(w))}catch(e){}}
+document.querySelectorAll('.vsplit').forEach(h=>{
+  h.addEventListener('dblclick',()=>{try{localStorage.removeItem('mc_top_'+WK())}catch(e){}applyW(WDEF[WK()]);drawChart()});
+  h.addEventListener('pointerdown',e=>{e.preventDefault();h.setPointerCapture(e.pointerId);h.classList.add('on');
+    const row=$('#topRow').getBoundingClientRect(),w=getW().slice(),k=h.dataset.split==='1'?0:1;
+    const mv=ev=>{const W=row.width,minP=[200/W*100,220/W*100],mid=260/W*100;
+      let p=k===0?(ev.clientX-row.left)/W*100:(row.right-ev.clientX)/W*100;
+      p=Math.max(minP[k],Math.min(p,100-mid-w[1-k]-1));w[k]=Math.round(p*10)/10;applyW(w);drawChart()};
+    const up=()=>{h.classList.remove('on');h.removeEventListener('pointermove',mv);h.removeEventListener('pointerup',up);setW(w)};
+    h.addEventListener('pointermove',mv);h.addEventListener('pointerup',up)});
+});
+applyW(getW());
 let mCb=null;
 function modal(t,b,ok,cb){ALLPOS=false;$('#modal .box').classList.remove('wide');$('#mT').textContent=t;$('#mB').innerHTML=b;$('#mOk').textContent=ok;mCb=cb;$('#modal').classList.add('on')}
 function closeM(){$('#modal').classList.remove('on');mCb=null;ALLPOS=false;$('#modal .box').classList.remove('wide')}
@@ -730,7 +763,7 @@ function order(side,opt){
     else t='Only '+qN(r.filled,s)+' of '+qN(r.qty,s)+' filled'+(r.filled?' at avg '+r.avg.toFixed(2):'')+': the simulated book had no more offers; the rest was cancelled (order #'+r.id+').';
     m.innerHTML=t;m.className='note '+(!r.ok?'dn':r.filled<r.qty&&type!=='LIMIT'?'dn':'up');poll();quoteFill()});
 }
-function setMedia(on){$('#v-terminal').classList.toggle('nomedia',!on);render()}
+function setMedia(on){$('#v-terminal').classList.toggle('nomedia',!on);applyW(getW());render();drawChart()}
 const need=()=>{if(!API){modal('Engine not running','<p>The terminal needs the C++ engine. Start the Codespace (it runs scripts/serve.sh).</p>','OK',()=>{});return false}return true};
 const ACT={
   allPos:()=>{modal('All open positions · '+(S.lots||[]).length,'<table id="posAll"></table>','Done',()=>{});ALLPOS=true;$('#modal .box').classList.add('wide');render()},
@@ -741,7 +774,7 @@ const ACT={
   restart:()=>{if(need())post('restart').then(poll)},
   sendMax:()=>{if(!LASTO||!QT)return;const l=inst($('#tSym').value).lot||1,can=Math.floor(Math.min(QT.fillable,LASTO.n*l)/l);if(can>0)order(LASTO.side,{lots:can})},
   sendSplit:()=>{if(!LASTO)return;const s=$('#tSym').value;modal('Send as a split order?','<p>'+H(LASTO.side)+' '+qN(LASTO.n*(inst(s).lot||1),s)+' '+H(s)+' in slices: each slice takes what the simulated book offers, at most 8 actions per second, every slice through the risk checks. It stops if cash or the 100% exposure limit would be exceeded, on KILL, or when you cancel it (✕ in the blotter).</p><p class="mute">The simulated book refills at the replay price, so a large split order does not move the price as it would on NSE. Treat its average price as optimistic.</p>','Send split order',()=>{order(LASTO.side,{split:true})})},
-  alerts:()=>{const v=$('#v-terminal');if(v.classList.contains('alerts')){v.classList.remove('alerts')}else{v.classList.add('alerts','nomedia');markSeen()}render()},
+  alerts:()=>{const v=$('#v-terminal');if(v.classList.contains('alerts')){v.classList.remove('alerts')}else{v.classList.add('alerts','nomedia');markSeen()}applyW(getW());render();drawChart()},
 
   closeSel:()=>{if(!SELL.size||!need())return;const ids=[...SELL];modal('Close '+ids.length+' position(s)?','<p>Each selected position is closed at market by its own sell order. At most 8 actions per second; extra closes wait in the queue.</p>','Close '+ids.length,()=>{post('close',{ids:ids.join(',')}).then(poll);SELL.clear()})},
   kill:()=>{if(need())modal('Activate kill switch?','<p>Blocks every new order at once (yours and the G.R.I.T agent\'s), cancels all open orders, closes every position at market and switches the agent OFF. At most 8 actions per second, so many items take a few seconds. Stays on until you press RE-ARM.</p>','Activate kill switch',()=>{post('kill').then(poll)})},

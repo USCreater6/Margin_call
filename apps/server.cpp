@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include "mc/agent.hpp"
@@ -206,6 +207,31 @@ Live read_live(const std::string& path) {
     else if (c[0] == "S" && c.size() >= 3) L.q[c[1]] = {std::atof(c[2].c_str()), c.size() >= 4 ? std::atof(c[3].c_str()) : 0.0};
   }
   return L;
+}
+// Background job status for the terminal (connector build, price history, live feed): whether its process runs
+// (found in /proc by its command line) and the last lines of its log in logs/.
+std::string job_json(const std::string& name) {
+  static const std::map<std::string, std::pair<std::string, std::string>> jobs = {
+      {"connector", {"tools/build_connector.py", "logs/connector.log"}}, {"history", {"tools/fetch_latest.py --days", "logs/history.log"}},
+      {"live", {"tools/live_feed.py", "logs/live_feed.log"}}, {"options", {"tools/fetch_options.py", "logs/fetch_options.log"}}};
+  const auto it = jobs.find(name);
+  if (it == jobs.end()) return "{\"ok\":false}";
+  bool running = false;
+  std::error_code ec;
+  for (const auto& e : std::filesystem::directory_iterator("/proc", ec)) {
+    const std::string pid = e.path().filename().string();
+    if (pid.empty() || !std::isdigit(static_cast<unsigned char>(pid[0]))) continue;
+    std::ifstream f(e.path() / "cmdline", std::ios::binary); std::string cmd((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    for (char& c : cmd) if (c == '\0') c = ' ';
+    if (cmd.find(it->second.first) != std::string::npos) { running = true; break; }
+  }
+  std::vector<std::string> tail;
+  { std::ifstream f(it->second.second); for (std::string l; std::getline(f, l);) { tail.push_back(l); if (tail.size() > 8) tail.erase(tail.begin()); } }
+  std::string log;
+  for (const auto& l : tail) log += l + "\n";
+  std::string esc_log;
+  for (char c : log) { if (c == '"' || c == '\\') esc_log += '\\'; if (c == '\n') esc_log += "\\n"; else if (static_cast<unsigned char>(c) >= 32) esc_log += c; }
+  return std::string("{\"ok\":true,\"running\":") + (running ? "true" : "false") + ",\"log\":\"" + esc_log + "\"}";
 }
 std::vector<OrderId> parse_ids(const std::string& list) {
   std::vector<OrderId> out;
@@ -450,6 +476,9 @@ int main(int argc, char** argv) {
       }
       const int i = sim.find_symbol(sym);
       respond(fd, 200, "application/json", i < 0 ? std::string("{\"bars\":[]}") : sim.candles_json(static_cast<std::size_t>(i), std::max(1, std::atoi(tfs.c_str()))));
+    } else if (path == "/api/jobs" && method == "GET") {
+      const auto s = query.find("name=");
+      respond(fd, 200, "application/json", job_json(s == std::string::npos ? "" : query.substr(s + 5, query.find('&', s) == std::string::npos ? std::string::npos : query.find('&', s) - s - 5)));
     } else if (path == "/api/watchlist" && method == "GET") {
       std::ostringstream o; o << "{\"base\":[";
       for (std::size_t i = 0; i < base_n; ++i) o << (i ? "," : "") << "\"" << sim.sym(i) << "\"";
