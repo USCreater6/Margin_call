@@ -49,6 +49,7 @@ class LiveSim {
     double sl = 0, tp = 0;      // owner's stop loss / take profit for this position, % of entry (0 = none)
     std::int64_t day = 0;       // IST day it was bought (intraday vs delivery charges)
     bool dlv = false;           // carried past its day: delivery charges applied
+    double bc = 0;              // buy-side charges paid on the quantity still held (incl. the delivery top-up)
     double sl_px() const { return sl > 0 ? entry * (1.0 - sl / 100.0) : 0.0; }
     double tp_px() const { return tp > 0 ? entry * (1.0 + tp / 100.0) : 0.0; } };
   // One real trading day (rupee prices in paise). vol_units = traded quantity in units; 0 = not verified.
@@ -114,7 +115,7 @@ class LiveSim {
         c.stt = inst_[l.inst].seg == Seg::Stock ? v * rates_.stt_deliv : 0.0;
         c.stamp = v * (rates_.stamp_deliv - rates_.stamp_intra);
         pf_.deposit(-c.total()); add_charges(orders_[l.id - 1].src, c);
-        l.dlv = true; ++carried;
+        l.bc += c.total(); l.dlv = true; ++carried;
       }
       if (carried) log("DELIVERY", std::to_string(carried) + " equity position(s) carried overnight: delivery STT and stamp duty charged");
       risk_.start_day(equity());
@@ -142,6 +143,18 @@ class LiveSim {
   }
 
   double equity() const { return pf_.equity(marks_); }
+  // Charges a sale of the whole lot at `px` rupees would pay now (STT, transaction, SEBI, GST).
+  double exit_charges(const Lot& l, double px) const {
+    return nse_charges(rates_, inst_[l.inst].seg, Side::Sell, px * static_cast<double>(l.qty), l.day != day_ || l.dlv).total();
+  }
+  // Net P&L of the lot if it were sold at `px` now: price gain - buy charges paid - exit charges.
+  double lot_net(const Lot& l, double px) const { return (px - l.entry) * static_cast<double>(l.qty) - l.bc - exit_charges(l, px); }
+  // Sale price at which the lot breaks even after every charge (buy and sell).
+  double breakeven(const Lot& l) const {
+    if (l.qty <= 0) return 0;
+    const double sr = nse_charges(rates_, inst_[l.inst].seg, Side::Sell, 1.0, l.day != day_ || l.dlv).total();
+    return (l.entry * static_cast<double>(l.qty) + l.bc) / (static_cast<double>(l.qty) * (1.0 - sr));
+  }
   double day_start() const { return risk_.day_start(); }
   const Charges& charges() const { return chg_; }
   // Buy-side statutory charges per rupee (intraday rates: what a buy pays when it fills).
@@ -401,9 +414,15 @@ class LiveSim {
     if (stub_ && !closed_ && now >= next_stub_ && !inst_.empty()) {
       next_stub_ = now + 4000000000LL;
       const std::size_t i = rng_.next() % inst_.size();
-      const Side s = (position(i).qty > 0 && (rng_.next() & 1)) ? Side::Sell : Side::Buy;   // long-only
-      log("AI STUB", std::string("Random stub signal: ") + to_string(s) + " " + std::to_string(inst_[i].lot) + " " + inst_[i].sym);
-      submit(i, s, OrdType::Market, inst_[i].lot, 0, "AI-STUB", now);
+      OrderId own = 0;   // the stub sells only a position it opened itself, never the owner's or G.R.I.T's
+      for (const Lot& l : lots_) if (l.qty > 0 && !l.closing && l.inst == i && orders_[l.id - 1].src == "AI-STUB") { own = l.id; break; }
+      if (own && (rng_.next() & 1)) {
+        log("AI STUB", "Random stub signal: SELL (close its own position " + tag(own) + ") " + inst_[i].sym);
+        close_lots({own}, "AI-STUB", now);
+      } else {
+        log("AI STUB", std::string("Random stub signal: BUY ") + std::to_string(inst_[i].lot) + " " + inst_[i].sym);
+        submit(i, Side::Buy, OrdType::Market, inst_[i].lot, 0, "AI-STUB", now);
+      }
     }
     if (now >= next_curve_) {   // one point per second
       next_curve_ = now + 1000000000LL;
@@ -428,7 +447,7 @@ class LiveSim {
     for (std::size_t i = 0; i < inst_.size(); ++i) { const Position p = position(i); if (p.qty) o << "P\t" << cl(inst_[i].sym) << "\t" << p.qty << "\t" << p.avg << "\n"; }
     for (const Lot& l : lots_)
       o << "L\t" << l.id << "\t" << cl(inst_[l.inst].sym) << "\t" << l.qty << "\t" << l.cost << "\t" << l.entry << "\t" << l.realized << "\t" << l.mt << "\t" << l.ns
-        << "\t" << l.closing << "\t" << cl(l.closer.empty() ? "-" : l.closer) << "\t" << l.sl << "\t" << l.tp << "\t" << l.day << "\t" << l.dlv << "\n";
+        << "\t" << l.closing << "\t" << cl(l.closer.empty() ? "-" : l.closer) << "\t" << l.sl << "\t" << l.tp << "\t" << l.day << "\t" << l.dlv << "\t" << l.bc << "\n";
     for (const Rec& r : orders_)
       o << "O\t" << r.o.id << "\t" << cl(inst_[r.o.inst].sym) << "\t" << static_cast<int>(r.o.side) << "\t" << static_cast<int>(r.o.type) << "\t" << r.o.px << "\t" << r.o.qty
         << "\t" << r.o.filled << "\t" << static_cast<int>(r.o.st) << "\t" << cl(r.src.empty() ? "-" : r.src) << "\t" << cl(r.why.empty() ? "-" : r.why) << "\t" << cl(r.code.empty() ? "-" : r.code)
@@ -478,6 +497,7 @@ class LiveSim {
           l.mt = D(f[7]); l.ns = L(f[8]); l.closing = f[9] == "1"; l.closer = S(f[10]);
           if (f.size() >= 13) { l.sl = D(f[11]); l.tp = D(f[12]); }
           if (f.size() >= 15) { l.day = L(f[13]); l.dlv = f[14] == "1"; }
+          l.bc = f.size() >= 16 ? D(f[15]) : -1;   // older file: worked out below from the entry value
           lots.push_back(l);
         } else if (t == "O" && f.size() >= 17) {
           Rec r; r.o.id = static_cast<OrderId>(L(f[1])); r.o.inst = idx(f[2]); r.o.side = static_cast<Side>(L(f[3])); r.o.type = static_cast<OrdType>(L(f[4]));
@@ -502,7 +522,12 @@ class LiveSim {
       pf_.restore(cash, pfr, pff, pos);
       risk_ = RiskEngine(lim_); risk_.restore(rk, rh, rl, rds);
       if (dday) day_ = dday;
-      orders_ = ords; lots_ = lots; events_ = evs; ledger_ = led; curve_ = crv; strat_ = strats;
+      orders_ = ords; lots_ = lots; events_ = evs;
+      for (Lot& l : lots_) if (l.bc < 0) {   // older snapshot: buy charges at today's rates on the entry value
+        const double v = l.entry * static_cast<double>(l.qty);
+        l.bc = l.qty > 0 ? nse_charges(rates_, inst_[l.inst].seg, Side::Buy, v, false).total() +
+                               (l.dlv ? v * ((inst_[l.inst].seg == Seg::Stock ? rates_.stt_deliv : 0.0) + rates_.stamp_deliv - rates_.stamp_intra) : 0.0) : 0.0;
+      } ledger_ = led; curve_ = crv; strat_ = strats;
       ev_seq_ = 0; for (Evt& e : events_) { if (e.seq <= ev_seq_) e.seq = ev_seq_ + 1; ev_seq_ = e.seq; }
       q_.clear(); later_.clear(); stamps_.clear(); stub_ = false; stepped_ = false;
       kill_pending_ = kp; flatten_pending_ = fp;
@@ -573,6 +598,7 @@ class LiveSim {
       o << (first ? "" : ",") << "{\"id\":\"" << tag(l.id) << "\",\"s\":\"" << esc(inst_[l.inst].sym) << "\",\"q\":" << l.qty << ",\"e\":" << l.entry
         << ",\"ns\":\"" << l.ns << "\",\"mt\":" << l.mt << ",\"r\":" << l.realized << ",\"c\":" << b(l.closing) << ",\"by\":\"" << esc(l.closer)
         << "\",\"sl\":" << l.sl << ",\"tp\":" << l.tp << ",\"slp\":" << l.sl_px() << ",\"tpp\":" << l.tp_px() << ",\"dlv\":" << b(l.dlv)
+        << ",\"bc\":" << l.bc << ",\"xc\":" << exit_charges(l, rupees(inst_[l.inst].px)) << ",\"be\":" << breakeven(l)
         << ",\"src\":\"" << esc(orders_[l.id - 1].src) << "\"}";
       first = false;
     }
@@ -910,7 +936,7 @@ class LiveSim {
         Lot n; n.id = owner; n.inst = r.o.inst; n.ns = wall_ns_; n.mt = has_replay_ ? mt_ : -1; n.sl = O.sl; n.tp = O.tp; n.day = day_;
         lots_.push_back(n); l = &lots_.back();
       }
-      l->qty += q; l->cost += notional; l->entry = l->cost / static_cast<double>(l->qty);
+      l->qty += q; l->cost += notional; l->entry = l->cost / static_cast<double>(l->qty); l->bc += paid.total();
       add_charges(osrc, paid);
     } else {                               // the targeted lot first, then oldest lots not being closed, then the rest
       Qty left = q;
@@ -919,12 +945,16 @@ class LiveSim {
         if (a <= 0) return;
         const double pnl = (rupees(px) - l.entry) * static_cast<double>(a);
         const Charges c = nse_charges(rates_, in.seg, Side::Sell, rupees(px) * static_cast<double>(a), l.day != day_ || l.dlv);
+        l.bc -= l.bc * static_cast<double>(a) / static_cast<double>(l.qty);
         l.realized += pnl; real_ += pnl; l.cost -= l.entry * static_cast<double>(a); l.qty -= a; left -= a;
         const std::string& lsrc = orders_[l.id - 1].src;   // P&L and the exit charges belong to the strategy that opened the lot
         strat_[lsrc].real += pnl; add_charges(lsrc, c); paid += c;
-        if (l.qty == 0) { l.cost = 0; l.closing = false; }
+        if (l.qty == 0) { l.cost = 0; l.bc = 0; l.closing = false; }
       };
       if (r.lot) if (Lot* l = find_lot(r.lot)) take(*l);
+      // a sell from the ticket (or a strategy) closes that source's own lots first, oldest first: it never takes
+      // a G.R.I.T or stub position while the source still holds its own
+      for (Lot& l : lots_) if (left > 0 && l.inst == r.o.inst && !l.closing && orders_[l.id - 1].src == osrc) take(l);
       for (Lot& l : lots_) if (left > 0 && l.inst == r.o.inst && !l.closing) take(l);
       for (Lot& l : lots_) if (left > 0 && l.inst == r.o.inst) take(l);
       if (left > 0) { const Charges c = nse_charges(rates_, in.seg, Side::Sell, rupees(px) * static_cast<double>(left), false); add_charges(osrc, c); paid += c; }

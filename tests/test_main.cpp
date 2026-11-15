@@ -871,6 +871,58 @@ static void test_session_charges_split_precision() {
   CHECK(std::fabs(std::stod(j.substr(c0, j.find(',', c0) - c0)) - big.cash()) < 0.001);   // paise survive (12 digits lost them)
 }
 
+// Owner report 16 Nov 2026: "I close a profitable position and the P&L turns negative".
+// The position must show its net P&L (after the buy charges paid and the sell charges a close would pay) before it
+// is closed, and closing at that price must realise exactly that net amount. Also: lots and totals reconcile to the
+// paisa after closing one of two lots bought at different prices; a sell only takes its own source's lots first.
+static void test_session_net_pnl_and_ownership() {
+  const Ts sec = 1000000000LL;
+  RiskLimits lim; lim.max_order_notional = 0;
+  auto near_p = [](double x, double y) { return std::fabs(x - y) < 1e-3; };   // a tenth of a paisa (large balances)
+  LiveSim f(1e10, lim, 7); f.add_instrument("FUT", "TEST", 2500000, 10, "test", 65); f.set_segment(0, Seg::IndexFuture);
+  CHECK(f.submit(0, Side::Buy, OrdType::Market, 65, 0, "MANUAL", 0).empty());
+  NEAR(f.lots()[0].bc, f.charges().total());                         // the lot carries the charges its buy paid
+  // price up 10 rupees: a gross profit, but below breakeven, so the net shown before the close is already negative
+  f.set_price(0, 2501000); f.step(sec, false);
+  const LiveSim::Lot l = f.lots()[0];
+  const double px = rupees(f.best_bid(0)), v = px * 65;
+  const double xc = v * 0.0005 + v * 0.0000183 + v * 0.000001 + 0.18 * (v * 0.0000183 + v * 0.000001);
+  NEAR(f.exit_charges(l, px), xc);
+  const double net = (px - l.entry) * 65 - l.bc - xc;
+  CHECK(px > l.entry && net < 0 && f.breakeven(l) > px);
+  NEAR(f.lot_net(l, f.breakeven(l)), 0.0);                            // breakeven really nets zero
+  CHECK(f.close_lots({l.id}, "MANUAL", 2 * sec) == 1 && f.lots()[0].qty == 0);   // one lot fits the best bid
+  NEAR(f.orders().back().avg_fill(), px);
+  CHECK(near_p(f.equity() - 1e10, net));                              // the close realises exactly the net shown
+  CHECK(near_p(f.equity() - 1e10, f.realized() - f.charges().total()));
+
+  // two lots at different prices, close the second: lot-level unrealized + realized - charges == equity - funds
+  LiveSim g(1e9, lim, 7); g.add_instrument("AAA", "TEST", 100000, 10);
+  CHECK(g.submit(0, Side::Buy, OrdType::Market, 100, 0, "MANUAL", 0).empty());
+  g.set_price(0, 110000); g.step(sec, false);
+  CHECK(g.submit(0, Side::Buy, OrdType::Market, 100, 0, "MANUAL", sec).empty());
+  g.set_price(0, 112000); g.step(2 * sec, false);
+  CHECK(g.close_lots({g.lots()[1].id}, "MANUAL", 3 * sec) == 1);
+  g.set_price(0, 105000); g.step(4 * sec, false);
+  double un = 0; for (const auto& x : g.lots()) un += (rupees(g.price(0)) - x.entry) * static_cast<double>(x.qty);
+  NEAR(un + g.realized() - g.charges().total(), g.equity() - 1e9);
+  NEAR(g.lots()[0].entry, g.lots()[0].cost / 100.0);
+
+  // a manual ticket SELL takes the owner's own lot, not the G.R.I.T / stub lot bought earlier
+  LiveSim h(1e9, lim, 7); h.add_instrument("AAA", "TEST", 100000, 10);
+  CHECK(h.submit(0, Side::Buy, OrdType::Market, 10, 0, "GRIT-AGENT", 0).empty());
+  CHECK(h.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", sec).empty());
+  CHECK(h.submit(0, Side::Sell, OrdType::Market, 10, 0, "MANUAL", 2 * sec).empty());
+  CHECK(h.lots()[0].qty == 10 && h.lots()[1].qty == 0);
+
+  // the snapshot keeps each lot's buy charges
+  LiveSim r(1e9, lim, 7); r.add_instrument("AAA", "TEST", 100000, 10);
+  CHECK(r.submit(0, Side::Buy, OrdType::Market, 10, 0, "MANUAL", 0).empty());
+  LiveSim r2(1e9, lim, 7); r2.add_instrument("AAA", "TEST", 100000, 10);
+  CHECK(r2.restore(r.snapshot(), sec).empty());
+  NEAR(r2.lots()[0].bc, r.lots()[0].bc);
+}
+
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -893,6 +945,7 @@ int main() {
       {"session: cash never negative; exit blocked by own bid is refused, not stuck", test_session_cash_and_blocked_exit},
       {"session: stop loss / take profit per position; per-strategy daily loss; alert ids; restore guard", test_session_exits_and_strategy_loss},
       {"session: NSE charges by segment; book-size rule and split orders; JSON precision", test_session_charges_split_precision},
+      {"session: net P&L before a close equals the close; lots reconcile; sells take their own lots", test_session_net_pnl_and_ownership},
       {"G.R.I.T agent: off by default, reasons, risk engine, kill, shadow, training log", test_agent},
   };
   int failed_tests = 0;
