@@ -1,0 +1,45 @@
+name: preview-data
+# Owner-requested design previews: official NSE daily data (stocks, NIFTY 50 list, NIFTY options) for a preview file.
+on:
+  workflow_dispatch:
+jobs:
+  data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Daily history for every NSE stock (120 days) and the replay day
+        run: mkdir -p .cache/nse web/data/history && python3 tools/fetch_latest.py --days 120
+      - name: NIFTY options, nearest expiry
+        run: python3 tools/fetch_options.py --strikes 10
+      - name: NIFTY 50 members and a symbol list for search
+        run: |
+          python3 - <<'PY'
+          import csv, io, os, sys, json, shutil
+          sys.path.insert(0, "tools")
+          from fetch_nse import fetch
+          blob, st = fetch("https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv")
+          print("nifty50 list HTTP", st)
+          os.makedirs("out/history", exist_ok=True)
+          members = []
+          if st == 200:
+              open("out/nifty50.csv", "wb").write(blob)
+              members = [r["Symbol"].strip() for r in csv.DictReader(io.StringIO(blob.decode("utf-8", "replace")))]
+          rows = []
+          for f in sorted(os.listdir("web/data/history")):
+              if not f.endswith(".csv"): continue
+              lines = [l for l in open("web/data/history/" + f) if l and l[0].isdigit()]
+              if lines: rows.append(f[:-4] + "," + lines[-1].strip())
+          open("out/symbols.csv", "w").write("symbol,date,open,high,low,close,volume\n" + "\n".join(rows) + "\n")
+          for s in members:
+              p = "web/data/history/" + s + ".csv"
+              if os.path.exists(p): shutil.copy(p, "out/history/")
+          for f in ("data/latest/instruments.csv", "data/latest/options.csv"):
+              if os.path.exists(f): shutil.copy(f, "out/")
+          print(len(rows), "symbols;", len(members), "NIFTY 50 members")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-data
+          path: out/
+          retention-days: 3
