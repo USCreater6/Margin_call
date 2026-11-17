@@ -972,6 +972,44 @@ static void test_session_options_and_live() {
   CHECK(!m.submit(1, Side::Buy, OrdType::Market, 65, 0, "MANUAL", 10 * sec).empty() && m.orders().back().code == "EXPIRED");
 }
 
+// 17 Nov: replay of a day from real 1-minute candles: each minute's open, high, low and close are hit, never beyond;
+// the market watch sees only the high, low and volume reached so far (no look-ahead).
+static void test_session_real_candles() {
+  const Ts sec = 1000000000LL;
+  LiveSim s = make_sim();
+  std::vector<LiveSim::Bar> bars(static_cast<std::size_t>(LiveSim::kMinutes));
+  Price p = 100000;
+  for (int m = 0; m < LiveSim::kMinutes; ++m) {   // a staircase: up 0.20 a minute, each minute's range 0.40
+    LiveSim::Bar& b = bars[static_cast<std::size_t>(m)];
+    b.o = p; b.c = p + 20; b.l = p - 10; b.h = p + 30; b.v = 100; p = b.c;
+  }
+  LiveSim::Day d; d.date = "2026-11-17"; d.o = bars.front().o; d.c = bars.back().c; d.l = bars.front().l; d.h = bars.back().h; d.pc = 99000; d.vol_units = 37500;
+  std::vector<LiveSim::Bar> short_bars(10);
+  CHECK(!s.set_day(1, d, &short_bars));                         // not a full session of candles: refused
+  CHECK(s.set_day(0, d, &bars));
+  CHECK(s.price(0) == 100000);
+  const std::string j0 = s.state_json(0, 0, true);
+  CHECK(j0.find("\"run\":{\"o\":1000,\"h\":1000,\"l\":1000,\"v\":0,\"real\":true}") != std::string::npos);   // at 09:15 nothing is known yet
+  CHECK(s.set_speed(25));
+  bool inside = true, hit_h = false, hit_l = false;
+  int checked = 0;
+  for (int k = 0; k <= 900; ++k) {                               // 1 s steps at 25x = 25 market seconds each
+    s.step(static_cast<Ts>(k) * sec);
+    const double mt = s.replay_time();
+    const int m = std::min(LiveSim::kMinutes - 1, static_cast<int>(mt / 60.0));
+    const LiveSim::Bar& b = bars[static_cast<std::size_t>(m)];
+    const Price x = s.price(0);
+    if (x < b.l || x > b.h) inside = false;
+    if (x == b.h) hit_h = true;
+    if (x == b.l) hit_l = true;
+    ++checked;
+  }
+  CHECK(inside && checked > 800);
+  CHECK(hit_h || hit_l);
+  CHECK(s.market_closed() && s.price(0) == bars.back().c);       // ends at the last candle's close
+  const std::string j1 = s.state_json(0, 901 * sec, true);
+  CHECK(j1.find("\"v\":37500") != std::string::npos);           // full day's volume known only at the end
+}
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -996,6 +1034,7 @@ int main() {
       {"session: NSE charges by segment; book-size rule and split orders; JSON precision", test_session_charges_split_precision},
       {"session: net P&L before a close equals the close; lots reconcile; sells take their own lots", test_session_net_pnl_and_ownership},
       {"session: NIFTY options priced from the index; option charges; expiry; live data on and off", test_session_options_and_live},
+      {"session: replay from real 1-minute candles, no look-ahead in the market watch", test_session_real_candles},
       {"G.R.I.T agent: off by default, reasons, risk engine, kill, shadow, training log", test_agent},
   };
   int failed_tests = 0;

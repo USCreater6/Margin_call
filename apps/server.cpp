@@ -208,6 +208,83 @@ Live read_live(const std::string& path) {
   }
   return L;
 }
+// Market-watch lists (config/watchlists.json, committed): [{"name": "...", "symbols": ["...", ...]}, ...].
+// A small reader for this one file format (names and symbols are plain strings without escapes).
+std::vector<std::pair<std::string, std::vector<std::string>>> load_lists(const std::string& path) {
+  std::vector<std::pair<std::string, std::vector<std::string>>> out;
+  std::ifstream f(path);
+  const std::string t((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  std::size_t pos = t.find("\"lists\"");
+  while (pos != std::string::npos) {
+    const std::size_t n = t.find("\"name\"", pos);
+    if (n == std::string::npos) break;
+    const std::size_t a = t.find('"', t.find(':', n) + 1), b = t.find('"', a + 1);
+    const std::size_t sy = t.find("\"symbols\"", b), lb = t.find('[', sy), rb = t.find(']', lb);
+    if (a == std::string::npos || b == std::string::npos || sy == std::string::npos || lb == std::string::npos || rb == std::string::npos) break;
+    std::vector<std::string> syms;
+    for (std::size_t q = t.find('"', lb); q != std::string::npos && q < rb;) {
+      const std::size_t e = t.find('"', q + 1);
+      if (e == std::string::npos || e > rb) break;
+      syms.push_back(t.substr(q + 1, e - q - 1));
+      q = t.find('"', e + 1);
+    }
+    out.emplace_back(t.substr(a + 1, b - a - 1), syms);
+    pos = rb;
+  }
+  return out;
+}
+// Real 1-minute candles of one trading day (tools/fetch_intraday.py, source Upstox): data/latest/intraday/SYMBOL.csv
+//   # date=YYYY-MM-DD pc=<previous close> source=<text>
+//   HH:MM,open,high,low,close,volume      (09:15 .. 15:29; a missing minute repeats the previous close)
+// Used for an instrument when its day is the same as or newer than the official day it has. Returns instruments set.
+int load_intraday(LiveSim& sim, const std::string& dir) {
+  int n = 0;
+  for (std::size_t i = 0; i < sim.instruments(); ++i) {
+    if (sim.is_option(i)) continue;
+    std::ifstream f(dir + "/" + sim.sym(i) + ".csv");
+    if (!f) continue;
+    std::string line, date, src = "Upstox 1-minute candles";
+    double pc = 0;
+    std::vector<LiveSim::Bar> bars(static_cast<std::size_t>(LiveSim::kMinutes));
+    std::vector<bool> got(bars.size(), false);
+    while (std::getline(f, line)) {
+      if (line.empty()) continue;
+      if (line[0] == '#') {
+        std::stringstream ss(line.substr(1));
+        for (std::string kv; ss >> kv;) {
+          if (kv.rfind("date=", 0) == 0) date = kv.substr(5);
+          else if (kv.rfind("pc=", 0) == 0) pc = std::atof(kv.c_str() + 3);
+        }
+        continue;
+      }
+      std::stringstream ss(line); std::vector<std::string> c;
+      for (std::string x; std::getline(ss, x, ',');) c.push_back(x);
+      if (c.size() < 6 || c[0].size() != 5) continue;
+      const int m = std::atoi(c[0].substr(0, 2).c_str()) * 60 + std::atoi(c[0].substr(3, 2).c_str()) - (9 * 60 + 15);
+      if (m < 0 || m >= LiveSim::kMinutes) continue;
+      LiveSim::Bar& b = bars[static_cast<std::size_t>(m)];
+      b.o = paise(c[1]); b.h = paise(c[2]); b.l = paise(c[3]); b.c = paise(c[4]); b.v = std::atof(c[5].c_str());
+      if (b.o > 0 && b.h > 0 && b.l > 0 && b.c > 0 && b.l <= b.h) got[static_cast<std::size_t>(m)] = true;
+    }
+    if (date.size() != 10 || std::count(got.begin(), got.end(), true) < LiveSim::kMinutes / 2) continue;   // too few minutes: keep the official day
+    const std::string have = sim.day_date(i);
+    if (!have.empty() && date < have) continue;
+    // fill missing minutes: before the first trade the first open, afterwards the previous close (no trade, no move)
+    const std::size_t first = static_cast<std::size_t>(std::find(got.begin(), got.end(), true) - got.begin());
+    for (std::size_t m = 0; m < bars.size(); ++m) {
+      if (got[m]) continue;
+      const Price p = m < first ? bars[first].o : bars[m - 1].c;
+      bars[m] = LiveSim::Bar{p, p, p, p, 0};
+    }
+    LiveSim::Day d; d.date = date; d.o = bars.front().o; d.c = bars.back().c; d.h = d.o; d.l = d.o;
+    double vol = 0;
+    for (const auto& b : bars) { d.h = std::max(d.h, b.h); d.l = std::min(d.l, b.l); vol += b.v; }
+    d.pc = pc > 0 ? static_cast<Price>(std::llround(pc * 100.0)) : d.o;
+    d.vol_units = vol; d.vol_note = "units (sum of Upstox 1-minute candles)";
+    if (sim.set_day(i, d, &bars)) { sim.set_source(i, "real 1-minute candles " + date + " (Upstox)"); ++n; }
+  }
+  return n;
+}
 // Background job status for the terminal (connector build, price history, live feed): whether its process runs
 // (found in /proc by its command line) and the last lines of its log in logs/.
 std::string job_json(const std::string& name) {
@@ -302,9 +379,14 @@ int main(int argc, char** argv) {
     for (const auto& s : nifty50) n50 += add_share(sim, s, uni, uni_date);
     for (const auto& s : watch) nw += add_share(sim, s, uni, uni_date);
   }
+  const auto lists = load_lists("config/watchlists.json");
+  int nl = 0;
+  if (loaded) for (const auto& l : lists) for (const auto& s : l.second) nl += add_share(sim, s, uni, uni_date);
   const int nopt = loaded ? load_options(sim, latest_dir + "/options.csv") : 0;
+  const int nbar = loaded ? load_intraday(sim, latest_dir + "/intraday") : 0;
   sim.set_stub_universe(base_n);
-  std::printf("instruments: %zu base, %d NIFTY 50, %d watched, %d NIFTY options; universe %zu shares (%s)\n", base_n, n50, nw, nopt, uni.size(), uni_date.c_str());
+  std::printf("instruments: %zu base, %d NIFTY 50, %d watched, %d in lists, %d NIFTY options, %d on real 1-minute candles; universe %zu shares (%s)\n",
+              base_n, n50, nw, nl, nopt, nbar, uni.size(), uni_date.c_str());
   auto save_watch = [&]() { std::string t; for (const auto& s : watch) t += s + "\n"; save_text(watch_file, t); };
   if (!loaded) {   // no data at all: placeholder instruments with placeholder prices, clearly labelled
     sim.add_instrument("NIFTY-FUT", "NSE F&O", 2500000, 50);
@@ -486,11 +568,21 @@ int main(int argc, char** argv) {
       for (std::size_t k = 0; k < watch.size(); ++k) o << (k ? "," : "") << "\"" << watch[k] << "\"";
       o << "],\"nifty50\":[";
       bool f1 = true; for (const auto& x : nifty50) if (sim.find_symbol(x) >= 0) { o << (f1 ? "" : ",") << "\"" << x << "\""; f1 = false; }
+      o << "],\"lists\":[";
+      for (std::size_t k = 0; k < lists.size(); ++k) {
+        o << (k ? "," : "") << "{\"name\":\"" << lists[k].first << "\",\"syms\":[";
+        bool f2 = true; for (const auto& x : lists[k].second) if (sim.find_symbol(x) >= 0) { o << (f2 ? "" : ",") << "\"" << x << "\""; f2 = false; }
+        o << "]}";
+      }
       o << "],\"universe_date\":\"" << uni_date << "\",\"live\":{\"ok\":" << (live.ok ? "true" : "false") << ",\"fetched\":" << live.fetched
         << ",\"n\":" << live.q.size() << ",\"nifty\":" << live.nifty << ",\"msg\":\"";
       for (char ch : live.msg) { if (ch == '"' || ch == '\\') o << '\\'; if (static_cast<unsigned char>(ch) >= 32) o << ch; }
       o << "\"}}";
       respond(fd, 200, "application/json", o.str());
+    } else if (path == "/api/upstox" && method == "GET") {   // last Upstox answer (tools/upstox_feed.py): depth, OHLC, index strip
+      std::ifstream f("data/live/upstox_quotes.json");
+      const std::string t((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+      respond(fd, 200, "application/json", t.empty() ? std::string("{}") : t);
     } else if (path == "/api/agent" && method == "GET") {
       respond(fd, 200, "application/json", agent.json(sim));
     } else if (path.rfind("/api/", 0) == 0 && method == "POST") {

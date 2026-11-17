@@ -3,7 +3,8 @@
 # if the engine of the current code version is already up, it does nothing.
 # In Codespaces this port is forwarded privately to you.
 #  1. builds and tests the engine if needed
-#  2. fetches the last NSE trading day (open, high, low, close, volume, tick sizes) for the replay
+#  2. fetches the last NSE trading day (open, high, low, close, volume, tick sizes) and its real 1-minute candles
+#     (Upstox) for the replay
 #  3. in the background: price history, connector data, TV channel list, fundamentals, news (every 2 min)
 # The demo account (wallet, positions, orders) is saved in data/session/state.tsv and restored on start.
 set -euo pipefail
@@ -26,6 +27,9 @@ python3 tools/fetch_latest.py --no-history > logs/fetch_latest.log 2>&1 \
   || echo "Could not fetch the NSE day (see logs/fetch_latest.log); the terminal uses the last fetched day, or labelled placeholders."
 python3 tools/fetch_options.py > logs/fetch_options.log 2>&1 \
   || echo "Could not fetch the NIFTY options file (see logs/fetch_options.log); options are not loaded."
+# real 1-minute candles of the replay day (today once its session is complete, else the last trading day): Upstox
+timeout 300 python3 tools/fetch_intraday.py > logs/fetch_intraday.log 2>&1 \
+  || echo "Could not fetch the 1-minute candles (see logs/fetch_intraday.log); the replay uses the official daily prices."
 # live prices in market hours (data/live/quotes.tsv; the engine replays the last official day otherwise):
 # Upstox when the Codespaces secret UPSTOX_ANALYTICS_TOKEN is set, else the free NSE server
 pkill -f "tools/live_feed.py" 2>/dev/null || true

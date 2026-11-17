@@ -58,6 +58,9 @@ class LiveSim {
     double tp_px() const { return tp > 0 ? entry * (1.0 + tp / 100.0) : 0.0; } };
   // One real trading day (rupee prices in paise). vol_units = traded quantity in units; 0 = not verified.
   struct Day { std::string date; Price o = 0, h = 0, l = 0, c = 0, pc = 0; double vol_units = 0; std::string vol_note; };
+  // One real 1-minute candle (paise; v = traded units in that minute). 375 of them cover 09:15-15:30.
+  struct Bar { Price o = 0, h = 0, l = 0, c = 0; double v = 0; };
+  static constexpr int kMinutes = kSession / 60;
 
   LiveSim(double capital, const RiskLimits& lim, std::uint64_t seed)
       : capital_(capital), lim_(lim), rng_(seed), pf_(capital, 1), risk_(lim) {
@@ -76,11 +79,28 @@ class LiveSim {
   // Market segment decides the statutory charges (include/mc/charges.hpp).
   void set_segment(std::size_t i, Seg s) { if (i < inst_.size()) inst_[i].seg = s; }
   // Attaches a real trading day to instrument i: builds its replay path and moves the price to the day's open.
-  bool set_day(std::size_t i, const Day& d) {
+  // With bars (exactly kMinutes real 1-minute candles of that day) the path follows them minute by minute: each
+  // minute's open, high, low and close are hit exactly; only the moves inside a minute are simulated.
+  bool set_day(std::size_t i, const Day& d, const std::vector<Bar>* bars = nullptr) {
     if (i >= inst_.size() || d.o <= 0 || d.h <= 0 || d.l <= 0 || d.c <= 0 || d.l > d.h) return false;
+    if (bars && static_cast<int>(bars->size()) != kMinutes) return false;
     Inst& in = inst_[i];
     in.day = d; in.has_day = true; in.prev = d.pc > 0 ? d.pc : d.o;
-    build_path(in);
+    in.real_bars = bars != nullptr;
+    if (bars) build_path_bars(in, *bars); else build_path(in);
+    // running high / low (every 5 market seconds) and traded volume so far (every minute): the market watch
+    // shows only what was known at the replay time, never the rest of the day
+    const std::size_t nb = static_cast<std::size_t>(kSession / 5) + 1, step = static_cast<std::size_t>(5 * kRes);
+    in.run_h.assign(nb, 0); in.run_l.assign(nb, 0);
+    Price h = in.path[0], l = in.path[0];
+    for (std::size_t k = 0; k < in.path.size(); ++k) {
+      h = std::max(h, in.path[k]); l = std::min(l, in.path[k]);
+      if (k % step == 0 && k / step < nb) { in.run_h[k / step] = h; in.run_l[k / step] = l; }
+    }
+    in.cum_v.assign(static_cast<std::size_t>(kMinutes) + 1, 0.0);
+    for (int m = 1; m <= kMinutes; ++m)
+      in.cum_v[static_cast<std::size_t>(m)] = bars ? in.cum_v[static_cast<std::size_t>(m) - 1] + (*bars)[static_cast<std::size_t>(m) - 1].v
+                                                   : d.vol_units * m / kMinutes;
     if (d.vol_units > 0) {
       const double per_level = d.vol_units / kSession * 5.0;
       in.level_qty = std::max<Qty>(in.lot, static_cast<Qty>(per_level / static_cast<double>(in.lot)) * in.lot);
@@ -89,7 +109,7 @@ class LiveSim {
       in.level_qty = 0;
       in.depth_note = "volume unit not verified: small fixed depth";
     }
-    if (replay_date_.empty()) replay_date_ = d.date;
+    if (replay_date_.empty() || d.date > replay_date_) replay_date_ = d.date;   // ISO dates: the newest day loaded
     has_replay_ = true;
     in.px = in.start = in.path[0];
     marks_[i] = in.px;
@@ -98,6 +118,10 @@ class LiveSim {
   }
 
   std::size_t instruments() const { return inst_.size(); }
+  // The official day attached to instrument i ("" if none) and whether it is an index option; source text shown to the owner.
+  std::string day_date(std::size_t i) const { return i < inst_.size() && inst_[i].has_day ? inst_[i].day.date : std::string(); }
+  bool is_option(std::size_t i) const { return i < inst_.size() && inst_[i].opt; }
+  void set_source(std::size_t i, const std::string& src) { if (i < inst_.size()) inst_[i].source = src; }
   int find_symbol(const std::string& s) const {
     for (std::size_t i = 0; i < inst_.size(); ++i) if (inst_[i].sym == s) return static_cast<int>(i);
     return -1;
@@ -290,6 +314,7 @@ class LiveSim {
   bool locked() const { return risk_.locked(); }
   bool stub() const { return stub_; }
   bool market_closed() const { return closed_; }
+  double replay_time() const { return mt_; }   // market seconds since 09:15 of the replayed day
   double market_time() const { return mt_; }
   std::size_t queued() const { return q_.size() + later_.size(); }
   const std::vector<Rec>& orders() const { return orders_; }
@@ -715,6 +740,18 @@ class LiveSim {
       if (in.has_day)
         o << ",\"day\":{\"date\":\"" << esc(in.day.date) << "\",\"o\":" << rupees(in.day.o) << ",\"h\":" << rupees(in.day.h) << ",\"l\":" << rupees(in.day.l)
           << ",\"c\":" << rupees(in.day.c) << ",\"vol\":" << in.day.vol_units << ",\"vnote\":\"" << esc(in.day.vol_note) << "\"}";
+      if (!live_mode_ && in.has_day && !in.opt && !in.run_h.empty()) {   // replay: only what is known at the replay time
+        const std::size_t k = std::min(in.run_h.size() - 1, static_cast<std::size_t>(std::max(0.0, mt_) / 5.0));
+        const std::size_t m = std::min(in.cum_v.size() - 1, static_cast<std::size_t>(std::max(0.0, mt_) / 60.0));
+        o << ",\"run\":{\"o\":" << rupees(in.path[0]) << ",\"h\":" << rupees(std::max(in.run_h[k], in.px)) << ",\"l\":" << rupees(std::min(in.run_l[k], in.px))
+          << ",\"v\":" << static_cast<long long>(in.cum_v[m]) << ",\"real\":" << b(in.real_bars) << "}";
+      }
+      {   // best bid / ask of the demo order book (synthetic market makers + resting demo orders)
+        Price bp = 0, ap = 0; Qty bq = 0, aq = 0;
+        in.book.levels(Side::Buy, 1, [&](Price p, Qty q) { bp = p; bq = q; });
+        in.book.levels(Side::Sell, 1, [&](Price p, Qty q) { ap = p; aq = q; });
+        o << ",\"bb\":[" << rupees(bp) << "," << bq << "],\"ba\":[" << rupees(ap) << "," << aq << "]";
+      }
       o << ",\"depth\":\"" << esc(in.depth_note) << "\"}";
     }
     o << "],\"book\":{\"asks\":[";
@@ -793,6 +830,8 @@ class LiveSim {
   struct Inst {
     std::string sym, venue; Price px = 0, start = 0, prev = 0, tick = 1; OrderBook book{256}; std::string source; Qty lot = 1; Seg seg = Seg::Stock;
     bool has_day = false; Day day; std::vector<Price> path; Qty level_qty = 0; std::string depth_note;
+    bool real_bars = false;                                // path from real 1-minute candles
+    std::vector<Price> run_h, run_l; std::vector<double> cum_v;   // replay: high / low so far (5 s steps), volume so far (per minute)
     Price live_px = 0;                                     // last live price (market hours)
     bool opt = false, call = true; double k = 0, iv = 0; std::string exp; std::int64_t exp_day = 0;   // index option
     std::vector<std::pair<float, float>> samples;         // live mode: (market second, price) once a second, for candles
@@ -1028,6 +1067,55 @@ class LiveSim {
     }
     // the four official prices exactly
     in.path[0] = d.o; in.path[static_cast<std::size_t>(ta)] = up ? d.l : d.h; in.path[static_cast<std::size_t>(tb)] = up ? d.h : d.l; in.path[static_cast<std::size_t>(N)] = d.c;
+  }
+
+  // Path from real 1-minute candles: inside minute m (points m*240 .. m*240+239) open -> first extreme -> second
+  // extreme -> close (low first when the minute closed up), Brownian bridges reflected at that minute's high and low.
+  // The next minute starts at its own open. Deterministic per symbol and date.
+  void build_path_bars(Inst& in, const std::vector<Bar>& bars) {
+    std::uint64_t hs = 1469598103934665603ULL;
+    for (char ch : in.sym + "|bars|" + in.day.date) { hs ^= static_cast<unsigned char>(ch); hs *= 1099511628211ULL; }
+    Rng r(hs);
+    auto gauss = [&r]() {
+      double u1 = r.uni(); if (u1 < 1e-12) u1 = 1e-12;
+      return std::sqrt(-2.0 * std::log(u1)) * std::cos(6.283185307179586 * r.uni());
+    };
+    const int P = 60 * kRes, N = kSession * kRes;
+    const Price t = in.tick > 0 ? in.tick : 1;
+    in.path.assign(static_cast<std::size_t>(N) + 1, bars[0].o);
+    std::vector<double> w;
+    for (int m = 0; m < kMinutes; ++m) {
+      const Bar& b = bars[static_cast<std::size_t>(m)];
+      const double lo = static_cast<double>(std::min({b.l, b.o, b.c})), hi = static_cast<double>(std::max({b.h, b.o, b.c}));
+      const double op = static_cast<double>(b.o), cl = static_cast<double>(b.c);
+      const bool up = cl >= op;
+      const int last = P - 1, ta = 1 + static_cast<int>((last / 2 - 1) * r.uni()), tb = std::max(ta + 1, last / 2 + static_cast<int>((last / 2 - 1) * r.uni()));
+      const int T[4] = {0, ta, tb, last};
+      const double V[4] = {op, up ? lo : hi, up ? hi : lo, cl};
+      auto reflect = [lo, hi](double x) {
+        if (hi <= lo) return lo;
+        for (int g = 0; g < 64 && (x > hi || x < lo); ++g) x = x > hi ? 2 * hi - x : 2 * lo - x;
+        return std::clamp(x, lo, hi);
+      };
+      const Price lo_t = ((static_cast<Price>(lo) + t - 1) / t) * t, hi_t = (static_cast<Price>(hi) / t) * t;
+      for (int s2 = 0; s2 < 3; ++s2) {
+        const int n = T[s2 + 1] - T[s2];
+        if (n <= 0) continue;
+        const double sigma = 0.3 * (hi - lo) / std::sqrt(static_cast<double>(n));
+        w.assign(static_cast<std::size_t>(n) + 1, 0.0);
+        for (int k = 1; k <= n; ++k) w[static_cast<std::size_t>(k)] = w[static_cast<std::size_t>(k) - 1] + sigma * gauss();
+        for (int k = 0; k <= n; ++k) {
+          const double f = static_cast<double>(k) / n;
+          const double x = reflect(V[s2] + (V[s2 + 1] - V[s2]) * f + w[static_cast<std::size_t>(k)] - f * w[static_cast<std::size_t>(n)]);
+          const Price p = static_cast<Price>(std::llround(x / static_cast<double>(t))) * t;
+          in.path[static_cast<std::size_t>(m * P + T[s2] + k)] = lo_t <= hi_t ? std::clamp(p, lo_t, hi_t) : static_cast<Price>(std::llround(x));
+        }
+      }
+      const std::size_t z = static_cast<std::size_t>(m * P);   // the candle's four prices exactly
+      in.path[z] = b.o; in.path[z + static_cast<std::size_t>(ta)] = up ? static_cast<Price>(lo) : static_cast<Price>(hi);
+      in.path[z + static_cast<std::size_t>(tb)] = up ? static_cast<Price>(hi) : static_cast<Price>(lo); in.path[z + static_cast<std::size_t>(last)] = b.c;
+    }
+    in.path[static_cast<std::size_t>(N)] = bars.back().c;
   }
 
   // Re-quotes the synthetic market makers around the current price. May fill the user's resting orders.

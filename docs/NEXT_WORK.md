@@ -36,6 +36,15 @@ Order of the list = recommended order. "Needs you" = a decision or input only yo
 
 ## C. Stage 2 — live data + simulated orders (needs your approval to start)
 
+**17 Nov 2026 (owner approved preview): market watch + replay on real 1-minute candles.** The watchlist is replaced
+by a market-watch grid (tabs from config/watchlists.json: DEFAULT, two sector lists still empty; My list; NIFTY 50),
+an index strip, a Depth | Chart | Option chain dock with the ticket under it, and a messages bar. The replay now
+follows real 1-minute candles (tools/fetch_intraday.py, Upstox candle API; today's session once complete after 15:30,
+else the last trading day): every minute's open, high, low and close are real, only moves inside a minute are
+simulated; the grid shows high, low and volume only up to the replay time (no look-ahead). Verified 17 Nov: minute
+volumes sum to NSE's daily volume (AIAENG 87,880 = 87,880; INFY 4,851,757 vs 4,852,092). Not yet: HFCL (BE series,
+trade-for-trade) is not loaded; NIFTY options still use the official close's implied volatility.
+
 **17 Nov 2026 (owner decision): Upstox is the live source.** The NSE server above never delivered data on 16 Nov
 (available: false). tools/upstox_feed.py (called by tools/live_feed.py when the Codespaces secret
 UPSTOX_ANALYTICS_TOKEN is set) uses Upstox's read-only Analytics Token (1 year, free, cannot place orders; no
