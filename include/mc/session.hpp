@@ -181,14 +181,14 @@ class LiveSim {
   bool option_expired(const Inst& in) const { return in.opt && civil_day(data_date()) > in.exp_day; }
 
   // ---- live data (market hours) ----
-  // The server calls set_live every loop: on = NSE's live prices are fresh and the market is open. While live,
+  // The server calls set_live every loop: on = live prices (Upstox or the free NSE server) are fresh and the market is open. While live,
   // instruments with a live price trade at it, NIFTY-FUT follows the live NIFTY 50 value x (futures/index of the last
   // official close) and the options are priced from the live index. Off: the replay of the last official day.
   void set_live(bool on, const std::string& date, double mt) {
     if (on && !live_mode_) {
       live_mode_ = true; live_date_ = date; closed_ = false;
       for (Inst& in : inst_) { in.samples.clear(); if (in.has_day) in.prev = in.day.c; }
-      log("LIVE DATA", "Market open: prices from NSE live data (stocks, NIFTY 50 index; refreshed about once a minute, 1-3 minutes delayed). NIFTY-FUT and options are derived from the live index.");
+      log("LIVE DATA", "Market open: live prices for stocks and the NIFTY 50 index (source and refresh shown under the Data label). NIFTY-FUT and options are derived from the live index.");
     } else if (!on && live_mode_) {
       live_mode_ = false; mt_ = 0; closed_ = false;
       for (std::size_t i = 0; i < inst_.size(); ++i) {

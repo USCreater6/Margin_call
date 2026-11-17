@@ -36,6 +36,18 @@ Order of the list = recommended order. "Needs you" = a decision or input only yo
 
 ## C. Stage 2 — live data + simulated orders (needs your approval to start)
 
+**17 Nov 2026 (owner decision): Upstox is the live source.** The NSE server above never delivered data on 16 Nov
+(available: false). tools/upstox_feed.py (called by tools/live_feed.py when the Codespaces secret
+UPSTOX_ANALYTICS_TOKEN is set) uses Upstox's read-only Analytics Token (1 year, free, cannot place orders; no
+OAuth app, no redirect URL, no static IP for market data). Every 4 s in NSE hours: full quotes (last price, 5-level
+bid/ask, OHLC, volume, circuits) for the shown stocks and the DEFAULT list (config/watchlists.json), and LTP for
+NIFTY 50, NIFTY BANK, INDIA VIX, SENSEX and the nearest MCX futures; written to data/live/quotes.tsv (engine
+unchanged) and data/live/upstox_quotes.json (for the market-watch grid, design preview pending). RK Global dropped
+(no public API found). **Must verify on the first market session:** keys per full-quote call (batches of 100 sent),
+the rate limit for the Analytics Token, whether a Codespace IP is accepted, and whether the secret reaches the
+lifecycle scripts. scripts/day_refresh.sh fetches the day's official NSE file in the evening (16:00-22:00 IST,
+every 30 min) and restarts the engine on it, so the replay is never a day behind.
+
 **Started 16 Nov 2026 (owner approved): free live prices for the demo.** tools/live_feed.py reads NSE's cm-market
 data server (free, no account; about once a minute, delayed 1-3 minutes; terms: informational / not for real-time
 trading) in market hours and writes data/live/quotes.tsv; the engine trades demo orders at those prices and replays

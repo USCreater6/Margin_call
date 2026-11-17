@@ -1,0 +1,8 @@
+{
+  "note": "Market-watch tabs. DEFAULT = owner's list from his broker terminal screenshot (16 Nov 2026). The two sector tabs are named by the owner; their stocks are not chosen yet (empty until he names them). Symbols are NSE cash-market symbols.",
+  "lists": [
+    {"name": "DEFAULT", "symbols": ["GOLDBEES", "INFY", "TATACAP", "ICICIBANK", "HDFCBANK", "LICI", "LICHSGFIN", "GOLD1", "AIAENG", "INDIGO", "TATASTEEL", "ONGC", "BPCL", "ADANIPORTS", "ADANIENSOL", "JIOFIN", "TCS", "HFCL"]},
+    {"name": "CRUDE OIL & NATURAL GAS", "symbols": []},
+    {"name": "AIR TRANSPORT SERVICE", "symbols": []}
+  ]
+}

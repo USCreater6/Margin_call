@@ -26,7 +26,8 @@ python3 tools/fetch_latest.py --no-history > logs/fetch_latest.log 2>&1 \
   || echo "Could not fetch the NSE day (see logs/fetch_latest.log); the terminal uses the last fetched day, or labelled placeholders."
 python3 tools/fetch_options.py > logs/fetch_options.log 2>&1 \
   || echo "Could not fetch the NIFTY options file (see logs/fetch_options.log); options are not loaded."
-# live NSE prices in market hours (data/live/quotes.tsv; the engine replays the last official day otherwise)
+# live prices in market hours (data/live/quotes.tsv; the engine replays the last official day otherwise):
+# Upstox when the Codespaces secret UPSTOX_ANALYTICS_TOKEN is set, else the free NSE server
 pkill -f "tools/live_feed.py" 2>/dev/null || true
 nohup python3 tools/live_feed.py --loop 30 > logs/live_feed.log 2>&1 &
 # replay day written by fetch_latest (7th column of the first data row)
@@ -45,6 +46,9 @@ if [ ! -d web/data/fund ] || [ -z "$(find web/data/fund -name '*.json' -mtime -1
   pkill -f "tools/fetch_fundamentals.py" 2>/dev/null || true
   nohup python3 tools/fetch_fundamentals.py > logs/fundamentals.log 2>&1 &
 fi
+# evening: fetch today's official NSE file once published and restart on it (scripts/day_refresh.sh)
+pkill -f "scripts/day_refresh.sh" 2>/dev/null || true
+nohup bash scripts/day_refresh.sh > logs/day_refresh.log 2>&1 &
 pkill -f "tools/fetch_news.py" 2>/dev/null || true
 nohup python3 tools/fetch_news.py --loop 120 > logs/news.log 2>&1 &
 echo "Background jobs: history, connector, channels, fundamentals, news -> logs/ (replay day ${day:-unknown})"

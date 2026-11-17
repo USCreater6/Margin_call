@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Live NSE prices for the terminal during market hours. SIMULATION input only: no orders go anywhere.
+"""Live prices for the terminal during market hours. SIMULATION input only: no orders go anywhere.
+
+Source choice (owner decision 16-17 Nov 2026): if the Codespaces secret UPSTOX_ANALYTICS_TOKEN is set, prices come
+from Upstox (tools/upstox_feed.py: last price every 4 s, best bid/ask, NIFTY 50, SENSEX, MCX). Without it, the free
+NSE server below is used as before.
 
 Source: NSE's "cm-market" data server (Model Context Protocol over HTTPS, https://mcp.nseindia.in/cmmkt/mcp). Free and
 without an account. Its own description: stock and index values refreshed every 1 minute; its page says intraday
@@ -16,7 +20,7 @@ Outside 09:10-15:35 IST on weekdays it only writes "LIVE <ms> 0 market closed" (
 Field names of the answers could not be seen before the first market session (the server returns no data while
 the market is closed), so the parser accepts several common spellings and says so in the message if none matched.
 
-Usage: live_feed.py [--loop 30] [--once]
+Usage: live_feed.py [--loop 30] [--upstox-loop 4] [--once]
 """
 import argparse, datetime as dt, json, os, sys, time, urllib.error, urllib.request
 
@@ -198,7 +202,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--loop", type=int, default=30, help="seconds between fetches in market hours")
     ap.add_argument("--once", action="store_true", help="one fetch now, whatever the time")
+    ap.add_argument("--upstox-loop", type=int, default=4, help="seconds between Upstox fetches in NSE hours")
     a = ap.parse_args()
+    if os.environ.get("UPSTOX_ANALYTICS_TOKEN", "").strip():
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import upstox_feed
+        upstox_feed.run(a.upstox_loop, a.once, log=lambda m: print(m, flush=True))
+        return
+    print("UPSTOX_ANALYTICS_TOKEN is not set: using the free NSE server", flush=True)
     mcp = Mcp()
     if a.once:
         print(cycle(mcp)); return
