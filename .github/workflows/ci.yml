@@ -62,13 +62,10 @@ jobs:
         run: python3 tools/check_channels.py
       - name: Fundamentals sample (NSE corporate actions, shareholding, results, XBRL figures)
         run: python3 tools/fetch_fundamentals.py --symbols RELIANCE,HDFCBANK,TCS && python3 -c "import json;r=json.load(open('web/data/fund/RELIANCE.json'));print(json.dumps(r.get('figures'),indent=1)[:1500]);print(r.get('shareholding',[])[:2]);print(r.get('actions',[])[:3])"
-      - name: Real 1-minute candles of the replay day (Upstox candle API, no token)
-        run: python3 tools/fetch_intraday.py && cat data/latest/intraday/_date && head -3 data/latest/intraday/RELIANCE.csv
       - name: Server uses the real closes
         run: |
           ./build/mc_server --web web --port 8098 & sleep 2
           curl -fsS localhost:8098/api/state | grep -q 'NSE close'
-          curl -fsS localhost:8098/api/state | grep -q 'real 1-minute candles'                 # replay follows the real candles
           curl -fsS localhost:8098/api/watchlist | grep -q '"name":"DEFAULT"'                   # market-watch lists from config/
           curl -fsS localhost:8098/api/state | grep -q '"replay":{"has":true'               # replay of the real day loaded
           curl -fsS localhost:8098/api/state | python3 -c "import json,sys;j=json.load(sys.stdin);print(j['replay']);[print(i['s'],i.get('lot'),i.get('day'),i.get('depth')) for i in j['inst']]"
@@ -77,6 +74,13 @@ jobs:
           ISIN=$(python3 -c "import json;print(next(c[0] for c in json.load(open('web/data/connector.json'))['c'] if c[1]=='RELIANCE'))")
           curl -fsS "localhost:8098/data/links/$ISIN.json" | head -c 400; echo
           curl -fsS localhost:8098/data/news.json | head -c 300; echo
+          kill %1
+      - name: Replay on real 1-minute candles (Upstox candle API, no token)
+        run: |
+          python3 tools/fetch_intraday.py && cat data/latest/intraday/_date && head -3 data/latest/intraday/RELIANCE.csv
+          ./build/mc_server --web web --port 8097 & sleep 2
+          curl -fsS localhost:8097/api/state | grep -q 'real 1-minute candles'                 # replay follows the real candles
+          curl -fsS localhost:8097/api/state | grep -q '"run":{"o":'                            # market watch: values so far only
           kill %1
       - name: Upload connector and price samples
         uses: actions/upload-artifact@v4
