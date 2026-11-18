@@ -194,8 +194,8 @@ int load_options(LiveSim& sim, const std::string& path) {
   return n;
 }
 // Live prices written by tools/live_feed.py (data/live/quotes.tsv):
-//   LIVE <fetched ms> <1|0> <message>  /  X <index name> <value> <prev close>  /  S <symbol> <last> <prev close>
-struct Live { long long fetched = 0; bool ok = false; std::string msg; double nifty = 0; std::map<std::string, std::pair<double, double>> q; };
+//   LIVE <fetched ms> <1|0> <message>  /  X <index name> <value> <prev close>  /  S <symbol> <last> <prev close> [<day volume>]
+struct Live { long long fetched = 0; bool ok = false; std::string msg; double nifty = 0; std::map<std::string, std::pair<double, double>> q; std::map<std::string, double> vol; };
 Live read_live(const std::string& path) {
   Live L; std::ifstream f(path);
   for (std::string line; std::getline(f, line);) {
@@ -204,7 +204,7 @@ Live read_live(const std::string& path) {
     if (c.empty()) continue;
     if (c[0] == "LIVE" && c.size() >= 3) { L.fetched = std::atoll(c[1].c_str()); L.ok = c[2] == "1"; L.msg = c.size() >= 4 ? c[3] : ""; }
     else if (c[0] == "X" && c.size() >= 3 && c[1] == "NIFTY 50") L.nifty = std::atof(c[2].c_str());
-    else if (c[0] == "S" && c.size() >= 3) L.q[c[1]] = {std::atof(c[2].c_str()), c.size() >= 4 ? std::atof(c[3].c_str()) : 0.0};
+    else if (c[0] == "S" && c.size() >= 3) { L.q[c[1]] = {std::atof(c[2].c_str()), c.size() >= 4 ? std::atof(c[3].c_str()) : 0.0}; if (c.size() >= 5) L.vol[c[1]] = std::atof(c[4].c_str()); }
   }
   return L;
 }
@@ -379,7 +379,19 @@ int main(int argc, char** argv) {
     for (const auto& s : nifty50) n50 += add_share(sim, s, uni, uni_date);
     for (const auto& s : watch) nw += add_share(sim, s, uni, uni_date);
   }
-  const auto lists = load_lists("config/watchlists.json");
+  // owner's market-watch lists (numbered tabs): data/session/lists.tsv "name<TAB>SYM,SYM,..."; first start: config/watchlists.json
+  const std::string lists_file = std::filesystem::path(state_file).parent_path().string() + "/lists.tsv";
+  std::vector<std::pair<std::string, std::vector<std::string>>> lists;
+  { std::ifstream f(lists_file);
+    for (std::string line; std::getline(f, line);) {
+      const auto tab = line.find('\t');
+      if (line.empty() || tab == std::string::npos) continue;
+      std::vector<std::string> v; std::stringstream ss(line.substr(tab + 1));
+      for (std::string x; std::getline(ss, x, ',');) if (!x.empty()) v.push_back(x);
+      lists.emplace_back(line.substr(0, tab), v);
+    } }
+  if (lists.empty()) lists = load_lists("config/watchlists.json");
+  auto save_lists = [&]() { std::string t; for (const auto& l : lists) { t += l.first + "\t"; for (std::size_t k = 0; k < l.second.size(); ++k) t += (k ? "," : "") + l.second[k]; t += "\n"; } save_text(lists_file, t); };
   int nl = 0;
   if (loaded) for (const auto& l : lists) for (const auto& s : l.second) nl += add_share(sim, s, uni, uni_date);
   const int nopt = loaded ? load_options(sim, latest_dir + "/options.csv") : 0;
@@ -469,7 +481,11 @@ int main(int argc, char** argv) {
       const std::int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365, doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
       const std::int64_t mp = (5 * doy + 2) / 153, d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9, y = yoe + era * 400 + (m <= 2);
       char date[48]; std::snprintf(date, sizeof date, "%04lld-%02lld-%02lld", static_cast<long long>(y), static_cast<long long>(m), static_cast<long long>(d));
-      for (const auto& [sym, v] : live.q) { const int i = sim.find_symbol(sym); if (i >= 0) sim.set_live_quote(static_cast<std::size_t>(i), static_cast<Price>(std::llround(v.first * 100.0)), static_cast<Price>(std::llround(v.second * 100.0))); }
+      for (const auto& [sym, v] : live.q) {
+        const int i = sim.find_symbol(sym);
+        const auto vv = live.vol.find(sym);
+        if (i >= 0) sim.set_live_quote(static_cast<std::size_t>(i), static_cast<Price>(std::llround(v.first * 100.0)), static_cast<Price>(std::llround(v.second * 100.0)), vv == live.vol.end() ? 0.0 : vv->second);
+      }
       sim.set_live_index(live.nifty);
       sim.set_live(true, date, sec - 33300.0);
     } else sim.set_live(false, "", 0);
@@ -545,19 +561,19 @@ int main(int argc, char** argv) {
         o << "{\"ok\":true,\"qty\":" << qty << ",\"fillable\":" << got << ",\"avg\":" << avg << ",\"depth\":" << sim.ask_depth(static_cast<std::size_t>(i)) << "}";
         respond(fd, 200, "application/json", o.str());
       }
-    } else if (path == "/api/candles" && method == "GET") {   // ?sym=...&tf=60
-      std::string sym, tfs;
-      for (const std::string& kv : {std::string("sym="), std::string("tf=")}) {
+    } else if (path == "/api/candles" && method == "GET") {   // ?sym=...&tf=60[&n=400]
+      std::string sym, tfs, ns;
+      for (const std::string& kv : {std::string("sym="), std::string("tf="), std::string("n=")}) {
         const auto s = query.find(kv);
         if (s == std::string::npos) continue;
         const auto e = query.find('&', s);
         std::string v = query.substr(s + kv.size(), e == std::string::npos ? std::string::npos : e - s - kv.size()), dv;
         for (char& ch : v) if (ch == '+') ch = ' ';
         if (!url_decode(v, dv)) dv.clear();
-        (kv == "sym=" ? sym : tfs) = dv;
+        (kv == "sym=" ? sym : kv == "tf=" ? tfs : ns) = dv;
       }
       const int i = sim.find_symbol(sym);
-      respond(fd, 200, "application/json", i < 0 ? std::string("{\"bars\":[]}") : sim.candles_json(static_cast<std::size_t>(i), std::max(1, std::atoi(tfs.c_str()))));
+      respond(fd, 200, "application/json", i < 0 ? std::string("{\"bars\":[]}") : sim.candles_json(static_cast<std::size_t>(i), std::max(1, std::atoi(tfs.c_str())), ns.empty() ? 400 : std::atoi(ns.c_str())));
     } else if (path == "/api/jobs" && method == "GET") {
       const auto s = query.find("name=");
       respond(fd, 200, "application/json", job_json(s == std::string::npos ? "" : query.substr(s + 5, query.find('&', s) == std::string::npos ? std::string::npos : query.find('&', s) - s - 5)));
@@ -593,13 +609,22 @@ int main(int argc, char** argv) {
         const double qty = std::atof(jget(body, "qty").c_str()), px = std::atof(jget(body, "px").c_str());
         const double sl = std::atof(jget(body, "sl").c_str()), tp = std::atof(jget(body, "tp").c_str());   // % of entry
         const bool split = jget(body, "split") == "true";
+        const std::string prod0 = jget(body, "prod"), prod = prod0.empty() ? "Intraday" : prod0;
+        const double tsl = std::atof(jget(body, "tsl").c_str()), trig = std::atof(jget(body, "trig").c_str());
         if (i < 0) out = ok("Unknown instrument");
-        else if ((side != "BUY" && side != "SELL") || (type != "MARKET" && type != "LIMIT")) out = ok("Side must be BUY or SELL; type MARKET or LIMIT");
+        else if ((side != "BUY" && side != "SELL") || (type != "MARKET" && type != "LIMIT" && type != "SL" && type != "SL-M")) out = ok("Side must be BUY or SELL; type MARKET, LIMIT, SL or SL-M");
         else if (!(qty >= 1) || qty > 1e9 || qty != std::floor(qty)) out = ok("Quantity must be a whole number of 1 or more");
+        else if (type == "SL" || type == "SL-M") {   // stop orders wait for their trigger (shown in the order list)
+          long wid = 0;
+          const std::string why = sim.add_trigger(static_cast<std::size_t>(i), side == "BUY" ? Side::Buy : Side::Sell, type, static_cast<Price>(std::llround(trig * 100.0)), 0,
+                                                  type == "SL" ? static_cast<Price>(std::llround(px * 100.0)) : 0, static_cast<Qty>(qty), prod, sl, tp, tsl, &wid);
+          out = ok(why);
+          if (why.empty()) out.insert(out.size() - 1, ",\"wait\":" + std::to_string(wid));
+        }
         else {
           const std::size_t before = sim.orders().size();   // the new order's index (a split order's slices come after it)
           const std::string why = sim.submit(static_cast<std::size_t>(i), side == "BUY" ? Side::Buy : Side::Sell, type == "MARKET" ? OrdType::Market : OrdType::Limit,
-                                             static_cast<Qty>(qty), static_cast<Price>(std::llround(px * 100.0)), "MANUAL", now, sl, tp, split);
+                                             static_cast<Qty>(qty), static_cast<Price>(std::llround(px * 100.0)), "MANUAL", now, sl, tp, split, prod, tsl);
           // the reply says what actually happened: filled quantity and average price, not just "accepted"
           const auto& r = sim.orders()[before];
           std::ostringstream ex;
@@ -609,6 +634,55 @@ int main(int argc, char** argv) {
           out = ok(why, why.empty() ? "" : r.code);
           out.insert(out.size() - 1, ex.str());
         }
+      } else if (path == "/api/gtt") {   // GTT (single trigger) or OCO (target + stop of a holding)
+        const int i = sim.find_symbol(jget(body, "sym"));
+        const std::string side = jget(body, "side"), kind = jget(body, "kind"), prod0 = jget(body, "prod");
+        auto P = [&](const char* k) { return static_cast<Price>(std::llround(std::atof(jget(body, k).c_str()) * 100.0)); };
+        const double qty = std::atof(jget(body, "qty").c_str());
+        long wid = 0;
+        if (i < 0) out = ok("Unknown instrument");
+        else if ((side != "BUY" && side != "SELL") || (kind != "GTT" && kind != "OCO")) out = ok("Side must be BUY or SELL; kind GTT or OCO");
+        else if (!(qty >= 1) || qty > 1e9 || qty != std::floor(qty)) out = ok("Quantity must be a whole number of 1 or more");
+        else {
+          const std::string why = sim.add_trigger(static_cast<std::size_t>(i), side == "BUY" ? Side::Buy : Side::Sell, kind, P("trig"), P("trig2"), P("lim"), static_cast<Qty>(qty),
+                                                  prod0.empty() ? "Delivery" : prod0, std::atof(jget(body, "sl").c_str()), std::atof(jget(body, "tp").c_str()), std::atof(jget(body, "tsl").c_str()), &wid);
+          out = ok(why);
+          if (why.empty()) out.insert(out.size() - 1, ",\"wait\":" + std::to_string(wid));
+        }
+      } else if (path == "/api/wcancel") {
+        out = ok(sim.cancel_trigger(std::atol(jget(body, "id").c_str())));
+      } else if (path == "/api/wmodify") {
+        auto P = [&](const char* k) { return static_cast<Price>(std::llround(std::atof(jget(body, k).c_str()) * 100.0)); };
+        out = ok(sim.modify_trigger(std::atol(jget(body, "id").c_str()), P("trig"), P("trig2"), P("lim"), static_cast<Qty>(std::atoll(jget(body, "qty").c_str()))));
+      } else if (path == "/api/modify") {   // resting LIMIT order: new price / quantity (cancel + new order)
+        const std::string id = jget(body, "id");
+        const std::size_t d = id.find_first_of("0123456789");
+        OrderId nid = 0;
+        out = d == std::string::npos ? ok("Unknown order")
+                                     : ok(sim.modify_order(static_cast<OrderId>(std::atoll(id.c_str() + d)), static_cast<Price>(std::llround(std::atof(jget(body, "px").c_str()) * 100.0)),
+                                                           static_cast<Qty>(std::atoll(jget(body, "qty").c_str())), now, &nid));
+      } else if (path == "/api/palert") {   // price alert: notifies only
+        const int i = sim.find_symbol(jget(body, "sym"));
+        out = i < 0 ? ok("Unknown instrument") : ok(sim.add_palert(static_cast<std::size_t>(i), std::atoi(jget(body, "cond").c_str()), std::atof(jget(body, "v").c_str())));
+      } else if (path == "/api/palert_del") {
+        out = ok(sim.del_palert(std::atol(jget(body, "id").c_str())));
+      } else if (path == "/api/lists") {   // numbered market-watch lists: new / rename / del / add / rm
+        const std::string op = jget(body, "op"), name = jget(body, "name"), sym = jget(body, "sym");
+        const int k = std::atoi(jget(body, "k").c_str());
+        const bool valid = k >= 0 && static_cast<std::size_t>(k) < lists.size();
+        if (op == "new") { if (lists.size() >= 10) out = ok("At most 10 lists"); else if (name.empty() || name.find('\t') != std::string::npos) out = ok("Give the list a name"); else { lists.emplace_back(name, std::vector<std::string>{}); save_lists(); } }
+        else if (!valid) out = ok("Unknown list");
+        else if (op == "rename") { if (name.empty() || name.find('\t') != std::string::npos) out = ok("Give the list a name"); else { lists[static_cast<std::size_t>(k)].first = name; save_lists(); } }
+        else if (op == "del") { lists.erase(lists.begin() + k); save_lists(); }
+        else if (op == "add") {
+          auto& v = lists[static_cast<std::size_t>(k)].second;
+          if (sym.empty() || sym.find(',') != std::string::npos) out = ok("No symbol");
+          else if (std::find(v.begin(), v.end(), sym) != v.end()) out = ok();
+          else if (v.size() >= 200) out = ok("A list holds at most 200");
+          else if (sim.find_symbol(sym) >= 0 || add_share(sim, sym, uni, uni_date)) { v.push_back(sym); save_lists(); agent.resize(sim.instruments()); }
+          else out = ok("Not in the NSE daily file of " + uni_date + " (EQ series)");
+        } else if (op == "rm") { auto& v = lists[static_cast<std::size_t>(k)].second; v.erase(std::remove(v.begin(), v.end(), sym), v.end()); save_lists(); }
+        else out = ok("Unknown list operation");
       } else if (path == "/api/cancel") {
         const std::string id = jget(body, "id");
         const std::size_t d = id.find_first_of("0123456789");

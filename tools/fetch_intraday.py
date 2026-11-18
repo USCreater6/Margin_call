@@ -18,7 +18,11 @@ Writes data/latest/intraday/SYMBOL.csv (read by the engine at start):
   HH:MM,open,high,low,close,volume
 and data/latest/intraday/_date. Skips the download when that day is already there (use --force to redo).
 
-Usage: fetch_intraday.py [--force] [--date YYYY-MM-DD]
+Also (owner decision 18 Nov 2026, chart ranges up to 5Y and the next expiry in the index strip):
+  web/data/history5/SYMBOL.csv  5 years of daily candles (YYYYMMDD,open,high,low,close,volume), Upstox, once a day
+  web/data/expiries.json        nearest option expiries of NIFTY, BANKNIFTY (NSE) and SENSEX (BSE), Upstox file
+
+Usage: fetch_intraday.py [--force] [--date YYYY-MM-DD] [--no-daily]
 """
 import argparse, datetime as dt, json, os, shutil, sys, time, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -79,6 +83,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--date", default="")
+    ap.add_argument("--no-daily", action="store_true")
     a = ap.parse_args()
     token = os.environ.get("UPSTOX_ANALYTICS_TOKEN", "").strip()
     now = U.now_ist()
@@ -102,12 +107,16 @@ def main():
             if not c:
                 raise SystemExit("no daily NIFTY 50 candles from Upstox: cannot tell the last trading day")
             D = max(day_of(x) for x in c)
+    have = ""
     try:
-        if not a.force and open(os.path.join(OUT, "_date")).read().strip() == D:
-            log(f"1-minute candles of {D} already here ({OUT}); nothing to do")
-            return
+        have = open(os.path.join(OUT, "_date")).read().strip()
     except OSError:
         pass
+    if not a.no_daily:
+        extras(token, log)
+    if not a.force and have == D:
+        log(f"1-minute candles of {D} already here ({OUT}); nothing to do")
+        return
     log(f"fetching real 1-minute candles of {D} ({'today, session complete' if mode == 'intraday' else 'last trading day'})")
     files = U.load_instruments(log)
     eq = U.equity_map(files)
@@ -147,6 +156,50 @@ def main():
     os.replace(tmp, OUT)
     log(f"{ok} of {len(syms)} instruments on real 1-minute candles of {D}"
         + (f"; no Upstox key: {', '.join(missing[:8])}" if missing else "") + (f"; not used: {', '.join(bad[:8])}" if bad else ""))
+
+
+def extras(token, log):
+    """Next option expiries (index strip) and 5 years of daily candles (chart ranges 3M-5Y), at most once a day."""
+    files = U.load_instruments(log)
+    now_ms = int(time.time() * 1000)
+    ex = {}
+    for name, src in (("NIFTY 50", "NSE"), ("NIFTY BANK", "NSE"), ("SENSEX", "BSE")):
+        und = {"NIFTY 50": "NIFTY", "NIFTY BANK": "BANKNIFTY", "SENSEX": "SENSEX"}[name]
+        e = sorted({x["expiry"] for x in files.get(src, []) if x.get("instrument_type") in ("CE", "PE") and x.get("underlying_symbol") == und and (x.get("expiry") or 0) >= now_ms})
+        if e:
+            ex[name] = dt.datetime.fromtimestamp(e[0] / 1000, U.IST).strftime("%Y-%m-%d")
+    os.makedirs("web/data", exist_ok=True)
+    json.dump({"source": "Upstox instrument files", "made": U.now_ist().isoformat(timespec="seconds"), "next": ex}, open("web/data/expiries.json", "w"))
+    out = "web/data/history5"
+    stamp = os.path.join(out, "_date")
+    today = U.now_ist().date().isoformat()
+    try:
+        if open(stamp).read().strip() == today:
+            return
+    except OSError:
+        pass
+    os.makedirs(out, exist_ok=True)
+    eq = U.equity_map(files)
+    to, fr = today, (U.now_ist().date() - dt.timedelta(days=5 * 365 + 2)).isoformat()
+    n = 0
+    for s in symbols():
+        k = eq.get(s)
+        if not k:
+            continue
+        try:
+            c = get(f"{k}/days/1/{to}/{fr}", token)
+            time.sleep(0.12)
+        except Exception as e:
+            log(f"5-year daily {s}: {e}")
+            continue
+        if c:
+            with open(os.path.join(out, s + ".csv"), "w") as f:
+                f.write("# date,open,high,low,close,volume (Upstox daily candles)\n")
+                for x in sorted(c, key=lambda x: x[0]):
+                    f.write(f"{x[0][:10].replace('-', '')},{x[1]},{x[2]},{x[3]},{x[4]},{int(x[5] or 0)}\n")
+            n += 1
+    open(stamp, "w").write(today + "\n")
+    log(f"5 years of daily candles for {n} symbols (web/data/history5); next expiries {ex}")
 
 
 if __name__ == "__main__":

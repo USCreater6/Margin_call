@@ -2,7 +2,8 @@
 """Live prices for the terminal during market hours. SIMULATION input only: no orders go anywhere.
 
 Source choice (owner decision 16-17 Nov 2026): if the Codespaces secret UPSTOX_ANALYTICS_TOKEN is set, prices come
-from Upstox (tools/upstox_feed.py: last price every 4 s, best bid/ask, NIFTY 50, SENSEX, MCX). Without it, the free
+from Upstox: the market-data stream every second (tools/upstox_stream.py), or the 4-second quote calls
+(tools/upstox_feed.py) when the stream does not work. Without it, the free
 NSE server below is used as before.
 
 Source: NSE's "cm-market" data server (Model Context Protocol over HTTPS, https://mcp.nseindia.in/cmmkt/mcp). Free and
@@ -207,7 +208,11 @@ def main():
     if os.environ.get("UPSTOX_ANALYTICS_TOKEN", "").strip():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import upstox_feed
-        upstox_feed.run(a.upstox_loop, a.once, log=lambda m: print(m, flush=True))
+        if a.once:
+            upstox_feed.run(a.upstox_loop, True, log=lambda m: print(m, flush=True))
+            return
+        import upstox_stream   # every second (owner decision 18 Nov 2026); falls back to the 4-second quotes by itself
+        upstox_stream.run(log=lambda m: print(m, flush=True), fallback_loop=a.upstox_loop)
         return
     print("UPSTOX_ANALYTICS_TOKEN is not set: using the free NSE server", flush=True)
     mcp = Mcp()

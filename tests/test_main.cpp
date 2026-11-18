@@ -1010,6 +1010,82 @@ static void test_session_real_candles() {
   const std::string j1 = s.state_json(0, 901 * sec, true);
   CHECK(j1.find("\"v\":37500") != std::string::npos);           // full day's volume known only at the end
 }
+// 18 Nov: products, stop orders (SL / SL-M), GTT, OCO, trailing stop, price alerts, modify, and their persistence.
+static void test_session_waiting_orders() {
+  const Ts sec = 1000000000LL;
+  LiveSim s = make_sim();
+  std::vector<LiveSim::Bar> bars(static_cast<std::size_t>(LiveSim::kMinutes));
+  Price p = 100000;
+  for (int m = 0; m < LiveSim::kMinutes; ++m) {        // up 0.50 a minute for 100 minutes, then down 0.50 a minute
+    LiveSim::Bar& b = bars[static_cast<std::size_t>(m)];
+    const Price d = m < 100 ? 50 : -50;
+    b.o = p; b.c = p + d; b.l = std::min(b.o, b.c); b.h = std::max(b.o, b.c); b.v = 10; p = b.c;
+  }
+  LiveSim::Day d; d.date = "2026-11-18"; d.o = bars.front().o; d.c = bars.back().c; d.pc = 100000; d.vol_units = 3750;
+  d.h = d.o; d.l = d.o; for (const auto& b : bars) { d.h = std::max(d.h, b.h); d.l = std::min(d.l, b.l); }
+  CHECK(s.set_day(0, d, &bars));
+  // products
+  CHECK(s.submit(0, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 0, 0, 0, false, "MTF").find("MTF is not set up") == 0);
+  CHECK(s.orders().back().code == "MTF_OFF");
+  CHECK(!s.submit(0, Side::Buy, OrdType::Limit, 1, 99000, "MANUAL", 0, 0, 0, false, "Scalper").empty());   // scalper: market only
+  CHECK(!s.submit(0, Side::Buy, OrdType::Market, 1, 0, "MANUAL", 0, 0, 0, false, "Weekly").empty());       // unknown product
+  CHECK(s.submit(0, Side::Buy, OrdType::Market, 2, 0, "MANUAL", 0, 0, 0, false, "Delivery", 1.0).empty());
+  const auto lot1 = s.orders().back().o.id;
+  // waiting orders: refused when the trigger is on the wrong side or the SELL is more than held
+  CHECK(!s.add_trigger(0, Side::Buy, "SL-M", 99000, 0, 0, 1, "Intraday", 0, 0, 0).empty());   // BUY stop below the last price
+  CHECK(!s.add_trigger(0, Side::Sell, "GTT", 101000, 0, 0, 5, "Delivery", 0, 0, 0).empty());  // holds 2, not 5
+  CHECK(!s.add_trigger(0, Side::Buy, "OCO", 101000, 99000, 0, 1, "Delivery", 0, 0, 0).empty()); // OCO is a SELL
+  CHECK(!s.add_trigger(0, Side::Buy, "SL", 100500, 0, 0, 1, "Intraday", 0, 0, 0).empty());   // SL needs a limit price
+  long w1 = 0, w2 = 0, w3 = 0;
+  CHECK(s.add_trigger(0, Side::Buy, "SL-M", 100500, 0, 0, 1, "Intraday", 0, 0, 0, &w1).empty());          // fires at 1,005.00
+  CHECK(s.add_trigger(0, Side::Buy, "GTT", 102000, 0, 102500, 1, "Delivery", 0, 0, 0, &w2).empty());    // fires at 1,020.00, LIMIT 1,025.00
+  CHECK(s.add_trigger(0, Side::Buy, "GTT", 130000, 0, 0, 1, "Delivery", 0, 0, 0, &w3).empty());         // never reached
+  CHECK(s.modify_trigger(w3, 131000, 0, 0, 1).empty() && s.triggers().back().trig == 131000);
+  CHECK(s.cancel_trigger(w3).empty() && !s.cancel_trigger(w3).empty());
+  long a1 = 0;
+  CHECK(s.add_palert(0, 0, 1010.0, &a1).empty() && !s.add_palert(0, 9, 1.0).empty());
+  CHECK(s.set_speed(25));
+  for (int k = 0; k <= 300; ++k) s.step(static_cast<Ts>(k) * sec);   // 300 s at 25x = 125 market minutes: up to 1,050 then down
+  CHECK(s.triggers()[0].status == "TRIGGERED" && s.orders()[static_cast<std::size_t>(s.triggers()[0].child) - 1].o.st == State::Filled);
+  CHECK(s.triggers()[1].status == "TRIGGERED" && s.orders()[static_cast<std::size_t>(s.triggers()[1].child) - 1].prod == "Delivery");
+  CHECK(s.triggers()[2].status == "CANCELLED");
+  CHECK(s.price_alerts()[0].status == "TRIGGERED");
+  bool tsl_hit = false, alert_logged = false;
+  for (const auto& e : s.events()) { if (e.k == "TRAILING STOP") tsl_hit = true; if (e.k == "PRICE ALERT") alert_logged = true; }
+  CHECK(tsl_hit && alert_logged);                                     // 1% below the high of 1,050 after the turn
+  bool lot1_open = false; for (const auto& l : s.lots()) if (l.id == lot1 && l.qty > 0) lot1_open = true;
+  CHECK(!lot1_open);
+  // modify a resting LIMIT order: cancel + new order
+  CHECK(s.submit(0, Side::Buy, OrdType::Limit, 1, 90000, "MANUAL", 400 * sec).empty());
+  const OrderId lim = s.orders().back().o.id;
+  OrderId nid = 0;
+  CHECK(s.modify_order(lim, 90100, 2, 401 * sec, &nid).empty() && nid == lim + 1);
+  CHECK(s.orders()[lim - 1].o.st == State::Cancelled && s.orders()[nid - 1].o.qty == 2 && s.orders()[nid - 1].o.px == 90100);
+  CHECK(!s.modify_order(lim, 90200, 1, 402 * sec).empty());           // the old one is gone
+  // persistence: waiting orders, alerts and products survive a restart
+  long w4 = 0;
+  CHECK(s.add_trigger(0, Side::Buy, "GTT", 150000, 0, 0, 1, "Delivery", 0, 0, 0, &w4).empty());
+  const std::string snap = s.snapshot();
+  LiveSim r = make_sim();
+  CHECK(r.set_day(0, d, &bars));
+  CHECK(r.restore(snap, 500 * sec).empty());
+  CHECK(r.triggers().size() == s.triggers().size() && r.triggers().back().status == "PENDING" && r.triggers().back().id == w4);
+  CHECK(r.price_alerts().size() == 1 && r.price_alerts()[0].status == "TRIGGERED");
+  CHECK(r.orders()[nid - 1].prod == s.orders()[nid - 1].prod);
+  long w5 = 0; CHECK(r.add_trigger(0, Side::Buy, "GTT", 160000, 0, 0, 1, "Delivery", 0, 0, 0, &w5).empty() && w5 == w4 + 1);   // ids keep counting
+  r.kill(600 * sec);
+  CHECK(r.triggers().back().status == "CANCELLED");                   // the kill switch cancels waiting orders too
+  // OCO: a SELL of a holding, target above / stop below; the target is reached first on the way up
+  LiveSim o = make_sim();
+  CHECK(o.set_day(0, d, &bars));
+  CHECK(o.submit(0, Side::Buy, OrdType::Market, 3, 0, "MANUAL", 0, 0, 0, false, "Delivery").empty());
+  long w6 = 0;
+  CHECK(!o.add_trigger(0, Side::Sell, "OCO", 99000, 101000, 0, 3, "Delivery", 0, 0, 0).empty());   // target below / stop above: refused
+  CHECK(o.add_trigger(0, Side::Sell, "OCO", 101000, 99500, 0, 3, "Delivery", 0, 0, 0, &w6).empty());
+  CHECK(o.set_speed(25));
+  for (int k = 0; k <= 60; ++k) o.step(static_cast<Ts>(k) * sec);    // 25 market minutes: up to 1,012.50
+  CHECK(o.triggers()[0].status == "TRIGGERED" && o.position(0).qty == 0);
+}
 int main() {
   struct T { const char* name; void (*fn)(); };
   const T tests[] = {
@@ -1035,6 +1111,7 @@ int main() {
       {"session: net P&L before a close equals the close; lots reconcile; sells take their own lots", test_session_net_pnl_and_ownership},
       {"session: NIFTY options priced from the index; option charges; expiry; live data on and off", test_session_options_and_live},
       {"session: replay from real 1-minute candles, no look-ahead in the market watch", test_session_real_candles},
+      {"session: products, SL / SL-M, GTT, OCO, trailing stop, price alerts, modify, persistence", test_session_waiting_orders},
       {"G.R.I.T agent: off by default, reasons, risk engine, kill, shadow, training log", test_agent},
   };
   int failed_tests = 0;

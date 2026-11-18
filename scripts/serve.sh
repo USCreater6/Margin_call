@@ -30,6 +30,12 @@ python3 tools/fetch_options.py > logs/fetch_options.log 2>&1 \
 # real 1-minute candles of the replay day (today once its session is complete, else the last trading day): Upstox
 timeout 300 python3 tools/fetch_intraday.py > logs/fetch_intraday.log 2>&1 \
   || echo "Could not fetch the 1-minute candles (see logs/fetch_intraday.log); the replay uses the official daily prices."
+# the Upstox stream needs two Python packages (websocket-client, upstox-python-sdk for the message format)
+if [ -n "${UPSTOX_ANALYTICS_TOKEN:-}" ] && ! python3 -c "import websocket, upstox_client.feeder.proto.MarketDataFeedV3_pb2" 2>/dev/null; then
+  timeout 300 python3 -m pip install --quiet --user websocket-client upstox-python-sdk > logs/pip.log 2>&1 \
+    || timeout 300 python3 -m pip install --quiet --user --break-system-packages websocket-client upstox-python-sdk >> logs/pip.log 2>&1 \
+    || echo "Could not install the stream packages (logs/pip.log): live prices use the 4-second quotes."
+fi
 # live prices in market hours (data/live/quotes.tsv; the engine replays the last official day otherwise):
 # Upstox when the Codespaces secret UPSTOX_ANALYTICS_TOKEN is set, else the free NSE server
 pkill -f "tools/live_feed.py" 2>/dev/null || true
