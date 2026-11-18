@@ -90,9 +90,21 @@ keeps raw answers in data/live/raw_*.json), and whether NSE's Akamai edge blocks
     v0 is rules from the strategies' indicators; v1 is trained on its logged decisions (data/agent/, never
     committed) on a GPU from 21 Nov. Headlines, filings and connector links are not used by v0 yet.
 
+**18 Nov 2026 (owner approved the 18 Nov preview, part 2 = terminal UI):** chart on TradingView Lightweight
+Charts v5.3.0 (web/vendor, Apache 2.0, credit on the chart and in its footer) in web/chart.js: 1s-1h and 1D, ranges
+1D-5Y, candle/bar/line, SMA/EMA/VWAP/Bollinger/Volume/RSI/MACD computed by Margin_call, trend line, horizontal line,
+measure, chart BUY/SELL with Instant on/off, Scalper (NIFTY options, MARKET, buy only, product Scalper) and Full screen.
+Numbered watchlists stored by the engine (+ new, rename, delete; search + Enter adds to the open list). Floating order
+form (Intraday/Delivery/MTF; MARKET/LIMIT/SL/SL-M; SL/TP/TSL %). Bottom panel: Open orders (incl. waiting SL/SL-M,
+modify), Positions, Holdings, Basket (20), GTT (single/OCO), Alerts; product chips. Sections: drag to resize,
+maximise (Esc), Ctrl + wheel zoom. Header: Hol. / Pos. P&L with hide. Strip: next expiry.
+**Still needs you:** MTF leverage, interest per day and eligible stocks (MTF refused until set); stocks for the
+CRUDE OIL & NATURAL GAS and AIR TRANSPORT SERVICE lists. **Must verify:** the Upstox stream with your token.
+
 ## Needs you (summary)
 
 - Delete the old Codespace and create a new one once (auto-update works from then on), send a screenshot.
 - Broker choice (items 3, 11).
 - Approval before Stage 2.
+- MTF parameters; stocks for the two sector lists.
 - GitHub plan limits (item 10).
